@@ -98,5 +98,69 @@ npm run build:frontend
 - **AST Allowlist**: Python's AST parser rejects function calls, attribute access, imports, lambdas, non-integer constants, and recursion depth $> 100$.
 - **Isolated Z3 Contexts**: Verification runs with dedicated `z3.Context()` instances to prevent solver state pollution.
 - **Single-Slot Inference Lock**: Concurrent execution requests receive HTTP 429 with `Retry-After: 5` to protect local hardware.
+
+---
+
+## 6. Model Integration Guide (Ollama & llama-cpp)
+
+PALIMPSEST supports three backend engines:
+- `fake`: Deterministic, offline scripted simulator for instant testing and CI without weights.
+- `ollama`: (Recommended) High-performance local inference daemon using Ollama with streaming cancellation.
+- `llamacpp`: In-process Python bindings for direct GGUF inference with multi-threading.
+
+### Step-by-Step Instructions: Integrating the Fine-Tuned Model
+
+#### Option A: Ollama Daemon (Recommended)
+
+1. **Place Model Weights**:
+   Ensure your fine-tuned quantized model is located in the `models/` directory:
+   ```bash
+   models/palimpsest-q4_k_m.gguf
+   ```
+
+2. **Create the Ollama Model**:
+   With Ollama running (`ollama serve`), run the following command from the project root:
+   ```bash
+   ollama create palimpsest -f Modelfile
+   ```
+   This compiles the ChatML template and stop tokens matching the training dataset format:
+   - Stop tokens: `<|im_end|>`, `<|im_start|>`
+   - Sampling: `temperature 0.2`, `top_p 0.95`, `num_ctx 2048`
+
+3. **Configure Environment**:
+   In your `.env` file (or environment variables), set:
+   ```bash
+   PALIMPSEST_BACKEND=ollama
+   OLLAMA_MODEL=palimpsest
+   OLLAMA_BASE_URL=http://localhost:11434
+   ```
+
+4. **Verify Integration**:
+   Run the CLI de-obfuscation demo against the live Ollama model:
+   ```bash
+   .venv\Scripts\python backend/app/cli_demo.py "(x ^ y) + 2 * (x & y)" --backend ollama
+   ```
+   Or launch the full application with `npm run dev` and select expressions in the web UI.
+
+#### Option B: Direct GGUF Inference with llama-cpp-python
+
+1. **Install Python Bindings**:
+   ```bash
+   pip install llama-cpp-python
+   ```
+
+2. **Configure Environment**:
+   In your `.env` file, set:
+   ```bash
+   PALIMPSEST_BACKEND=llamacpp
+   LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf
+   LLAMACPP_N_THREADS=8
+   ```
+
+3. **Run Smoke Test**:
+   ```bash
+   pytest backend/tests/test_llm_backends.py -v
+   ```
+
 - **Air-Gapped Telemetry**: SQLite database runs locally in WAL mode with a dedicated background writer thread. Cloud telemetry (LangSmith) is disabled by default.
 

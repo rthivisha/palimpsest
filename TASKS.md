@@ -113,14 +113,14 @@
 ---
 
 ## Phase 5: Real Model Integration (Ollama & llama-cpp)
-- [ ] Implement `backend/app/llm/ollama_backend.py` with error handling if daemon is unreachable
-- [ ] Implement `backend/app/llm/llamacpp_backend.py` with lazy loading and multi-threading
-- [ ] Create `Modelfile` with ChatML template and stop tokens matching teammate's training
-- [ ] Implement prompt format unit tests verifying exact character-for-character reproduction of training data
-- [ ] Update documentation with step-by-step model import instructions:
-  - [ ] `ollama create palimpsest -f Modelfile`
-  - [ ] Fallback instructions for `llama-cpp-python`
-- [ ] Commit & Git Tag: `phase-5-complete`
+- [x] Implement `backend/app/llm/ollama_backend.py` with error handling if daemon is unreachable
+- [x] Implement `backend/app/llm/llamacpp_backend.py` with lazy loading and multi-threading
+- [x] Create `Modelfile` with ChatML template and stop tokens matching teammate's training
+- [x] Implement prompt format unit tests verifying exact character-for-character reproduction of training data
+- [x] Update documentation with step-by-step model import instructions:
+  - [x] `ollama create palimpsest -f Modelfile`
+  - [x] Fallback instructions for `llama-cpp-python`
+- [ ] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
