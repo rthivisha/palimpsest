@@ -598,8 +598,13 @@ class TestConcurrencyAndCancellation:
         start_time = time.perf_counter()
         await app(scope, receive, send)
 
-        # Allow worker thread to catch cancel and update telemetry
-        await asyncio.sleep(0.3)
+        from backend.app.api.routes_run import active_runs, run_lock
+
+        # Allow worker thread to catch cancel, update telemetry, and release lock
+        for _ in range(25):
+            if run_id not in active_runs and not run_lock.locked():
+                break
+            await asyncio.sleep(0.1)
         temp_db.sync()
 
         # Assert worker stopped at the next node boundary (did not sleep for 5s)

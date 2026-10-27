@@ -395,7 +395,6 @@ async def start_run(req: RunRequest, request: Request):
             finally:
                 # Trigger cancellation on client disconnect or stream closure
                 cancel_event.set()
-                active_runs.pop(run_id, None)
 
         return StreamingResponse(
             event_generator(),
