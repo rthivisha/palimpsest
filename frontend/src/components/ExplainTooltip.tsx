@@ -2,7 +2,16 @@ import React, { useState } from 'react';
 import { Info } from 'lucide-react';
 
 interface ExplainTooltipProps {
-  topic: 'mba' | 'cegis' | 'z3' | 'bitvec' | 'sat_unsat' | 'opaque' | 'compression';
+  topic:
+    | 'mba'
+    | 'cegis'
+    | 'z3'
+    | 'smt'
+    | 'bitvec'
+    | 'sat_unsat'
+    | 'counterexample'
+    | 'opaque'
+    | 'compression';
   explainMode: boolean;
   inline?: boolean;
 }
@@ -23,6 +32,11 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
     content:
       'Microsoft Z3 is a formal verification solver, NOT an AI model. In QF_BV (Quantifier-Free Bit-Vectors), Z3 algebraically checks whether there is ANY input where original != candidate across all 2^64 values. It produces mathematical proofs, never probabilistic guesses.',
   },
+  smt: {
+    title: 'SMT Solving (Satisfiability Modulo Theories)',
+    content:
+      'SMT solvers generalize boolean SAT solving by supporting rich background theories like fixed-width bit-vectors. Instead of sampling random test cases, SMT solvers systematically explore mathematical constraints to definitively prove equivalence.',
+  },
   bitvec: {
     title: '64-bit Unsigned Bit-Vectors',
     content:
@@ -31,7 +45,12 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   sat_unsat: {
     title: 'UNSAT (Equivalent) vs SAT (Counterexample)',
     content:
-      '• UNSAT: The negation (original != candidate) has NO solutions. Equivalence is mathematically PROVEN.\n• SAT: A counterexample was found. The solver gives concrete variable values where the candidate produces the wrong output.',
+      '• UNSAT: The miter condition (original != candidate) has NO solutions. Equivalence is mathematically PROVEN.\n• SAT: A counterexample was found. The solver gives concrete variable values where the candidate produces the wrong output.',
+  },
+  counterexample: {
+    title: 'Counterexample Witness',
+    content:
+      'A concrete set of variable values (e.g. x=1, y=1) discovered by Z3 where original and candidate evaluate to different outputs. This concrete failure is fed back into the model prompt so it learns from its exact mistake.',
   },
   opaque: {
     title: 'Opaque Predicates',

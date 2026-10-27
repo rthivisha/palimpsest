@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   BarChart,
   Bar,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -63,7 +65,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
     }
   };
 
-  // Prepare chart data: Attempts distribution
+  // Prepare chart data: 1. Attempts distribution
   const attemptsDist = [
     { name: '1 Turn', count: 0 },
     { name: '2 Turns', count: 0 },
@@ -77,6 +79,22 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
     else if (run.attempts === 3) attemptsDist[2].count += 1;
     else if (run.attempts >= 4) attemptsDist[3].count += 1;
   });
+
+  // Prepare chart data: 2. Success Rate ratio
+  const successRatioData = [
+    { name: 'Verified (UNSAT)', count: stats?.verified_runs || 0 },
+    { name: 'Failed / Unverified', count: stats?.failed_runs || 0 },
+  ];
+
+  // Prepare chart data: 3. Z3 Latency Progression across recent runs
+  const latencyData = history
+    .slice(0, 10)
+    .reverse()
+    .map((run, idx) => ({
+      name: `Run ${idx + 1}`,
+      latency: run.total_ms,
+      status: run.final_status,
+    }));
 
   return (
     <div className="space-y-6">
@@ -137,32 +155,100 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
         </div>
       )}
 
-      {/* Recharts Analytics: Attempts Distribution */}
-      <div className="bg-cyber-surface border border-cyber-border rounded-xl p-5 shadow-lg">
-        <div className="text-xs font-semibold text-slate-300 font-mono mb-4 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-cyan-400" />
-          <span>SYNTHESIS ATTEMPTS DISTRIBUTION</span>
+      {/* Analytics Charts Grid: Attempts, Success Rate, Z3 Latency */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Chart 1: Attempts per Run */}
+        <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4 shadow-lg">
+          <div className="text-xs font-semibold text-slate-300 font-mono mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+            <span>ATTEMPTS PER RUN</span>
+          </div>
+          <div className="h-40 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={attemptsDist} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} tickLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    borderColor: '#1e293b',
+                    fontSize: '11px',
+                    fontFamily: 'monospace',
+                  }}
+                />
+                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                  {attemptsDist.map((_, index) => (
+                    <Cell key={`cell-att-${index}`} fill={index === 0 ? '#10b981' : index === 1 ? '#06b6d4' : '#f59e0b'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-        <div className="h-44 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={attemptsDist} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickLine={false} />
-              <YAxis stroke="#64748b" fontSize={11} tickLine={false} allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#0f172a',
-                  borderColor: '#1e293b',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                }}
-              />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {attemptsDist.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={index === 0 ? '#10b981' : index === 1 ? '#06b6d4' : '#f59e0b'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+
+        {/* Chart 2: Success Rate (Verification Ratio) */}
+        <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4 shadow-lg">
+          <div className="text-xs font-semibold text-slate-300 font-mono mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span>SUCCESS RATE RATIO</span>
+          </div>
+          <div className="h-40 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={successRatioData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} tickLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    borderColor: '#1e293b',
+                    fontSize: '11px',
+                    fontFamily: 'monospace',
+                  }}
+                />
+                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                  <Cell fill="#10b981" />
+                  <Cell fill="#ef4444" />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Chart 3: Z3 Latency Progression (ms) */}
+        <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4 shadow-lg">
+          <div className="text-xs font-semibold text-slate-300 font-mono mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+            <span>Z3 LATENCY PROGRESSION (ms)</span>
+          </div>
+          <div className="h-40 w-full">
+            {latencyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={latencyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
+                  <YAxis stroke="#64748b" fontSize={10} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderColor: '#1e293b',
+                      fontSize: '11px',
+                      fontFamily: 'monospace',
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="latency"
+                    stroke="#06b6d4"
+                    fill="rgba(6, 182, 212, 0.2)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-500 font-mono text-xs">
+                No latency history recorded yet
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

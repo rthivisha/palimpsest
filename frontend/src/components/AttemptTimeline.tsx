@@ -107,7 +107,7 @@ export const AttemptTimeline: React.FC<AttemptTimelineProps> = ({ attempts, expl
                     className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 transition-colors mb-1"
                   >
                     <Brain className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Neural Model Reasoning</span>
+                    <span>Model-Generated Reasoning (Unverified Proposal)</span>
                     {isThinkOpen ? (
                       <ChevronDown className="w-3.5 h-3.5" />
                     ) : (
@@ -117,6 +117,9 @@ export const AttemptTimeline: React.FC<AttemptTimelineProps> = ({ attempts, expl
 
                   {isThinkOpen && (
                     <div className="p-3 rounded bg-slate-950/80 border border-slate-800/80 text-xs font-mono text-slate-300 leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      <div className="text-[10px] text-amber-400/90 font-mono mb-2 pb-1.5 border-b border-slate-800 flex items-center gap-1">
+                        <span>⚠ Heuristic fast guess: Model output is not authoritative. Equivalence is verified strictly by Z3 below.</span>
+                      </div>
                       {att.think}
                     </div>
                   )}

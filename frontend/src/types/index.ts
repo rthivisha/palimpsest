@@ -80,11 +80,15 @@ export interface StatsResponse {
 }
 
 export interface ExampleExpr {
-  name: string;
+  id?: string;
+  title?: string;
+  name?: string;
+  category?: string;
   expression: string;
   expected_simplified: string;
   description: string;
   variables: string[];
+  transformation_steps?: string[];
 }
 
 export interface SystemHealth {

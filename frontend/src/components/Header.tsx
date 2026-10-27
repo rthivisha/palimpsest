@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, Cpu, CloudOff, HelpCircle, Activity, Database, BookOpen } from 'lucide-react';
+import { ShieldCheck, Cpu, HelpCircle, Activity, Database, BookOpen } from 'lucide-react';
 import { SystemHealth } from '../types';
 
 interface HeaderProps {
@@ -103,15 +103,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             <span>Z3 QF_BV (64-bit)</span>
-          </div>
-
-          {/* Cloud Tracing Status */}
-          <div
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded border border-slate-800 bg-slate-900/60 text-xs font-mono text-slate-400"
-            title="LangSmith Cloud Tracing Disabled (Air-Gapped Local Operation)"
-          >
-            <CloudOff className="w-3.5 h-3.5 text-amber-500" />
-            <span>LangSmith: Local</span>
           </div>
 
           {/* Explain Mode Toggle */}

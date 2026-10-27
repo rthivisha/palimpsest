@@ -329,7 +329,7 @@ async def start_run(req: RunRequest, request: Request):
     if not run_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=429,
-            detail="PALIMPSEST is currently processing another de-obfuscation run. Only 1 local run is supported concurrently.",
+            detail="Only 1 local run is supported concurrently. Previous run still finishing.",
             headers={"Retry-After": "5"},
         )
 

@@ -56,11 +56,11 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-sm font-bold font-mono text-slate-200 flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-cyan-400" />
-                    <span>{item.name}</span>
+                    <span>{item.title || item.name}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400">
                     <span>Vars:</span>
-                    <span className="text-cyan-300 font-semibold">{item.variables.join(', ')}</span>
+                    <span className="text-cyan-300 font-semibold">{item.variables ? item.variables.join(', ') : 'none'}</span>
                   </div>
                 </div>
 
@@ -73,6 +73,22 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({
                   </span>
                   <div className="text-cyan-300 break-all">{item.expression}</div>
                 </div>
+
+                {/* Step-by-Step Algebraic Transformation Steps */}
+                {item.transformation_steps && item.transformation_steps.length > 0 && (
+                  <div className="mb-2 p-3 rounded bg-slate-900/60 border border-slate-800 text-xs font-mono">
+                    <span className="text-amber-300 font-semibold block text-[11px] mb-1.5">
+                      Algebraic De-obfuscation & Reasoning Steps:
+                    </span>
+                    <ol className="space-y-1 text-slate-300 text-[11px] leading-relaxed">
+                      {item.transformation_steps.map((step, sIdx) => (
+                        <li key={sIdx} className="pl-1.5 border-l-2 border-cyan-500/40">
+                          {step}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
 
                 {/* Target Canonical Form */}
                 <div className="p-2.5 rounded bg-emerald-950/20 border border-emerald-900/40 text-xs font-mono">

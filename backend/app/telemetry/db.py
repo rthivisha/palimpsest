@@ -316,7 +316,8 @@ class TelemetryDB:
                         SUM(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN 1 ELSE 0 END) as verified_runs,
                         SUM(CASE WHEN final_status IN ('FAILED', 'REJECTED_UNSAFE', 'ERROR', 'CANCELLED') THEN 1 ELSE 0 END) as failed_runs,
                         AVG(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN compression_pct ELSE NULL END) as avg_compression,
-                        AVG(total_ms) as avg_latency_ms
+                        AVG(total_ms) as avg_latency_ms,
+                        AVG(attempts) as avg_attempts
                     FROM runs;
                 """)
                 row = cur.fetchone()
@@ -328,6 +329,7 @@ class TelemetryDB:
                         "success_rate_pct": 0.0,
                         "avg_compression_pct": 0.0,
                         "avg_latency_ms": 0.0,
+                        "avg_attempts": 0.0,
                     }
 
                 total = row["total_runs"]
@@ -336,6 +338,7 @@ class TelemetryDB:
                 success_rate = round((verified / total) * 100, 2) if total > 0 else 0.0
                 avg_comp = round(row["avg_compression"] or 0.0, 2)
                 avg_lat = round(row["avg_latency_ms"] or 0.0, 2)
+                avg_att = round(row["avg_attempts"] or 0.0, 2)
 
                 return {
                     "total_runs": total,
@@ -344,6 +347,7 @@ class TelemetryDB:
                     "success_rate_pct": success_rate,
                     "avg_compression_pct": avg_comp,
                     "avg_latency_ms": avg_lat,
+                    "avg_attempts": avg_att,
                 }
         except Exception as exc:
             logger.error("Error computing stats: %s", exc)
@@ -354,6 +358,7 @@ class TelemetryDB:
                 "success_rate_pct": 0.0,
                 "avg_compression_pct": 0.0,
                 "avg_latency_ms": 0.0,
+                "avg_attempts": 0.0,
             }
 
 
