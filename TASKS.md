@@ -140,3 +140,4 @@
 | Phase | Tag | Commit Hash | Summary |
 | :--- | :--- | :--- | :--- |
 | Phase 0 | `phase-0-plan` | `c43b1e6` | Repository initialization, .gitignore, ARCHITECTURE.md, TASKS.md |
+| Phase 1 | `phase-1-complete` | `9eff72c` | AST safety gate, Z3 64-bit BitVec verifier, AST utils, test suite |
