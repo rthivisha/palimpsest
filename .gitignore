@@ -62,6 +62,9 @@ backend/data/*.jsonl
 node_modules/
 frontend/dist/
 frontend/build/
+dist/
+build/
+*.tsbuildinfo
 .npm
 .yarn/
 *.log

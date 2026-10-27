@@ -1,0 +1,355 @@
+import { useState, useRef, useCallback } from 'react';
+import { Attempt, FinalPayload, RunDetail, RunStartedPayload } from '../types';
+
+interface UseRunStreamReturn {
+  isRunning: boolean;
+  activeNode: string | null;
+  runId: string | null;
+  expression: string;
+  obfNodes: number;
+  maxIterations: number;
+  attempts: Attempt[];
+  finalResult: FinalPayload | null;
+  error: string | null;
+  is429Blocked: boolean;
+  retryCountdown: number;
+  backend: string | null;
+  startRun: (expr: string, maxIters?: number) => Promise<void>;
+  cancelRun: () => Promise<void>;
+  resetRun: () => void;
+  loadPastRun: (pastRun: RunDetail) => void;
+  clearError: () => void;
+}
+
+export function useRunStream(): UseRunStreamReturn {
+  const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [activeNode, setActiveNode] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [expression, setExpression] = useState<string>('');
+  const [obfNodes, setObfNodes] = useState<number>(0);
+  const [maxIterations, setMaxIterations] = useState<number>(5);
+  const [attempts, setAttempts] = useState<Attempt[]>([]);
+  const [finalResult, setFinalResult] = useState<FinalPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [backend, setBackend] = useState<string | null>(null);
+
+  // HTTP 429 Concurrency Backoff State
+  const [is429Blocked, setIs429Blocked] = useState<boolean>(false);
+  const [retryCountdown, setRetryCountdown] = useState<number>(0);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const countdownTimerRef = useRef<number | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  const resetRun = useCallback(() => {
+    setIsRunning(false);
+    setActiveNode(null);
+    setRunId(null);
+    setAttempts([]);
+    setFinalResult(null);
+    setError(null);
+  }, []);
+
+  const loadPastRun = useCallback((pastRun: RunDetail) => {
+    setIsRunning(false);
+    setActiveNode(null);
+    setRunId(pastRun.run_id);
+    setExpression(pastRun.expression);
+    setObfNodes(pastRun.obf_nodes);
+    setMaxIterations(pastRun.max_iterations);
+    setBackend(pastRun.backend);
+    setAttempts(pastRun.attempts_history || []);
+    setFinalResult({
+      status: pastRun.final_status,
+      final_expr: pastRun.final_expr,
+      obf_nodes: pastRun.obf_nodes,
+      final_nodes: pastRun.final_status === 'VERIFIED_EQUIVALENT' && pastRun.final_expr ? 1 : null,
+      compression_pct: pastRun.compression_pct,
+      total_ms: pastRun.total_ms,
+      attempts: pastRun.attempts,
+      reason: pastRun.final_status === 'VERIFIED_EQUIVALENT' ? null : 'Loaded from historical telemetry records',
+    });
+    setError(null);
+  }, []);
+
+  const cancelRun = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (runId) {
+      try {
+        await fetch(`/api/runs/${runId}/cancel`, { method: 'POST' });
+      } catch {
+        // Best effort cancellation
+      }
+    }
+    setIsRunning(false);
+    setActiveNode(null);
+    setError('Execution aborted by user.');
+  }, [runId]);
+
+  const startRun = useCallback(async (expr: string, maxIters: number = 5) => {
+    if (!expr.trim() || is429Blocked) return;
+
+    // Reset current run state
+    setIsRunning(true);
+    setActiveNode('parse_ast');
+    setError(null);
+    setFinalResult(null);
+    setAttempts([]);
+    setExpression(expr);
+    setMaxIterations(maxIters);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const response = await fetch('/api/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: jsonBody({ expression: expr, max_iterations: maxIters }),
+        signal: abortController.signal,
+      });
+
+      // 1. Handle HTTP 429: "previous run still finishing" with Retry-After header
+      if (response.status === 429) {
+        const retryHeader = response.headers.get('retry-after');
+        const seconds = retryHeader ? Math.max(1, parseInt(retryHeader, 10)) : 5;
+
+        setIs429Blocked(true);
+        setRetryCountdown(seconds);
+        setError(`Previous run still finishing. Please wait ${seconds}s before retrying.`);
+        setIsRunning(false);
+        setActiveNode(null);
+
+        if (countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+        }
+
+        countdownTimerRef.current = window.setInterval(() => {
+          setRetryCountdown((prev) => {
+            if (prev <= 1) {
+              if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+              setIs429Blocked(false);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+
+        return;
+      }
+
+      if (!response.ok) {
+        let errorDetail = `Server responded with HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData.detail) errorDetail = errData.detail;
+        } catch {
+          // Keep generic detail
+        }
+        setError(errorDetail);
+        setIsRunning(false);
+        setActiveNode(null);
+        return;
+      }
+
+      if (!response.body) {
+        setError('No response stream received from server.');
+        setIsRunning(false);
+        setActiveNode(null);
+        return;
+      }
+
+      // 2. Consume SSE stream reader
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const block of lines) {
+          const trimmed = block.trim();
+          if (!trimmed || trimmed.startsWith(':')) {
+            // Heartbeat ping comment, ignore
+            continue;
+          }
+
+          let eventType = '';
+          let eventData: any = null;
+
+          for (const line of trimmed.split('\n')) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              try {
+                eventData = JSON.parse(line.slice(5).trim());
+              } catch {
+                eventData = null;
+              }
+            }
+          }
+
+          if (!eventType || !eventData) continue;
+
+          // Process parsed SSE event
+          switch (eventType) {
+            case 'run_started': {
+              const payload = eventData as RunStartedPayload;
+              setRunId(payload.run_id);
+              setObfNodes(payload.obf_nodes);
+              setBackend(payload.backend);
+              break;
+            }
+
+            case 'node_started': {
+              setActiveNode(eventData.node);
+              break;
+            }
+
+            case 'node_finished': {
+              // Active node will update with next node_started or final
+              break;
+            }
+
+            case 'proposal': {
+              const iter = eventData.iteration;
+              setAttempts((prev) => {
+                const existing = prev.find((a) => a.iteration === iter);
+                if (existing) {
+                  return prev.map((a) =>
+                    a.iteration === iter
+                      ? { ...a, candidate: eventData.candidate, think: eventData.think, raw_output: eventData.raw_output }
+                      : a
+                  );
+                } else {
+                  return [
+                    ...prev,
+                    {
+                      iteration: iter,
+                      candidate: eventData.candidate,
+                      think: eventData.think,
+                      raw_output: eventData.raw_output,
+                    },
+                  ];
+                }
+              });
+              break;
+            }
+
+            case 'verification': {
+              const iter = eventData.iteration;
+              setAttempts((prev) => {
+                const existing = prev.find((a) => a.iteration === iter);
+                if (existing) {
+                  return prev.map((a) =>
+                    a.iteration === iter
+                      ? {
+                          ...a,
+                          status: eventData.status,
+                          latency_ms: eventData.latency_ms,
+                          witness: eventData.witness,
+                          expected: eventData.expected,
+                          actual: eventData.actual,
+                          diff_bits: eventData.diff_bits,
+                        }
+                      : a
+                  );
+                } else {
+                  return [
+                    ...prev,
+                    {
+                      iteration: iter,
+                      candidate: eventData.candidate,
+                      status: eventData.status,
+                      latency_ms: eventData.latency_ms,
+                      witness: eventData.witness,
+                      expected: eventData.expected,
+                      actual: eventData.actual,
+                      diff_bits: eventData.diff_bits,
+                    },
+                  ];
+                }
+              });
+              break;
+            }
+
+            case 'retry': {
+              const iter = eventData.iteration;
+              setAttempts((prev) =>
+                prev.map((a) =>
+                  a.iteration === iter
+                    ? { ...a, feedback_message: eventData.feedback_message }
+                    : a
+                )
+              );
+              break;
+            }
+
+            case 'final': {
+              setFinalResult(eventData as FinalPayload);
+              setIsRunning(false);
+              setActiveNode(null);
+              break;
+            }
+
+            case 'error': {
+              setError(eventData.error || 'Synthesis run terminated with an internal error.');
+              setIsRunning(false);
+              setActiveNode(null);
+              break;
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // Handled cleanly
+      } else {
+        setError(err.message || 'Stream connection failed.');
+      }
+    } finally {
+      setIsRunning(false);
+      setActiveNode(null);
+      abortControllerRef.current = null;
+    }
+  }, [is429Blocked]);
+
+  return {
+    isRunning,
+    activeNode,
+    runId,
+    expression,
+    obfNodes,
+    maxIterations,
+    attempts,
+    finalResult,
+    error,
+    is429Blocked,
+    retryCountdown,
+    backend,
+    startRun,
+    cancelRun,
+    resetRun,
+    loadPastRun,
+    clearError,
+  };
+}
+
+function jsonBody(obj: any): string {
+  return JSON.stringify(obj);
+}
+
