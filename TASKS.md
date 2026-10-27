@@ -141,3 +141,4 @@
 | :--- | :--- | :--- | :--- |
 | Phase 0 | `phase-0-plan` | `c43b1e6` | Repository initialization, .gitignore, ARCHITECTURE.md, TASKS.md |
 | Phase 1 | `phase-1-complete` | `9eff72c` | AST safety gate, Z3 64-bit BitVec verifier, AST utils, test suite |
+| Phase 2 | `phase-2-complete` | `ee0ec56` | LangGraph CEGIS loop, prompt builder, fake backend, CLI demo |
