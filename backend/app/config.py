@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # Formal Verification Limits
     Z3_TIMEOUT_MS: int = 3000
     MAX_ITERATIONS: int = 5
+    SHIFT_SEMANTICS: str = "z3"  # "z3" (default: shift >= 64 is 0) or "x86_mask" (shift & 63)
+    MODEL_TIMEOUT_SECONDS: int = 10
 
     # [CONFIRM] Items & Tunables
     # Role used for the Z3 feedback turn: "user" (default) or "tool"

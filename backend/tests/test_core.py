@@ -136,6 +136,20 @@ class TestSafetyGate:
         assert not safe
         assert "AST depth exceeds limit" in err
 
+    def test_rejects_negative_shift_amounts(self):
+        """Negative constant shift amounts must be rejected by the safety gate."""
+        disallowed_shifts = [
+            "x << -1",
+            "x >> -2",
+            "x << (-5)",
+            "x >> (-64)",
+        ]
+        for expr in disallowed_shifts:
+            safe, err = is_safe_ast(expr)
+            assert not safe, f"Expected negative shift '{expr}' to be rejected"
+            with pytest.raises(SafetyViolationError):
+                validate_ast(expr)
+
 
 # ==============================================================================
 # 2. AST Utilities Tests
@@ -266,7 +280,67 @@ class TestZ3Verifier:
         orig = "x"
         cand = "x ^ (x >> 32)"
         res = verify_equivalence(orig, cand)
-        assert res["status"] != STATUS_VERIFIED
+        assert res["status"] == "SAT"
+        assert res["witness"]["x"] >= 2**32
+
+    def test_recompute_expected_actual_python_evaluation(self):
+        """For every SAT counterexample, independently recompute in plain Python with 64-bit mask."""
+        import ast
+
+        def eval_uint64(expr: str, env: dict) -> int:
+            tree = ast.parse(expr, mode="eval")
+            MASK = 0xFFFFFFFFFFFFFFFF
+
+            def _eval(node: ast.AST) -> int:
+                if isinstance(node, ast.Expression):
+                    return _eval(node.body)
+                elif isinstance(node, ast.Name):
+                    return env[node.id] & MASK
+                elif isinstance(node.value if isinstance(node, ast.Constant) else None, int):
+                    return node.value & MASK
+                elif isinstance(node, ast.UnaryOp):
+                    v = _eval(node.operand)
+                    if isinstance(node.op, ast.Invert):
+                        return (~v) & MASK
+                    elif isinstance(node.op, ast.USub):
+                        return (-v) & MASK
+                elif isinstance(node, ast.BinOp):
+                    l = _eval(node.left)
+                    r = _eval(node.right)
+                    if isinstance(node.op, ast.Add):
+                        return (l + r) & MASK
+                    elif isinstance(node.op, ast.Sub):
+                        return (l - r) & MASK
+                    elif isinstance(node.op, ast.Mult):
+                        return (l * r) & MASK
+                    elif isinstance(node.op, ast.BitAnd):
+                        return (l & r) & MASK
+                    elif isinstance(node.op, ast.BitOr):
+                        return (l | r) & MASK
+                    elif isinstance(node.op, ast.BitXor):
+                        return (l ^ r) & MASK
+                    elif isinstance(node.op, ast.LShift):
+                        return (l << r) & MASK if r < 64 else 0
+                    elif isinstance(node.op, ast.RShift):
+                        return (l >> r) & MASK if r < 64 else 0
+                raise ValueError(f"Unsupported node: {node}")
+
+            return _eval(tree)
+
+        cases = [
+            ("x + y", "x ^ y"),
+            ("(x ^ y) + 2 * (x & y)", "x ^ y"),
+            ("x", "x ^ (x >> 32)"),
+            ("x + y", "x + z"),
+        ]
+        for orig, cand in cases:
+            res = verify_equivalence(orig, cand)
+            assert res["status"] == STATUS_SAT
+            expected_py = eval_uint64(orig, res["witness"])
+            actual_py = eval_uint64(cand, res["witness"])
+            assert expected_py == res["expected"], f"Expected mismatch for {orig} under witness {res['witness']}"
+            assert actual_py == res["actual"], f"Actual mismatch for {cand} under witness {res['witness']}"
+            assert expected_py != actual_py
 
     def test_candidate_with_variable_not_in_original(self):
         """Candidate containing a variable not present in original is handled cleanly."""
@@ -290,19 +364,30 @@ class TestZ3Verifier:
         res_sub = verify_equivalence("-(x - y)", "y - x")
         assert res_sub["status"] == STATUS_VERIFIED
 
-    def test_shifts_by_64_or_more(self):
-        """Tests that shift counts >= 64 are masked to 6 bits (0-63)."""
+    def test_shifts_z3_default_semantics(self):
+        """Under default Z3 semantics, shifts >= 64 evaluate to 0."""
+        # x << 64 == 0
+        assert verify_equivalence("x << 64", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+
+        # x >> 64 == 0
+        assert verify_equivalence("x >> 64", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+
+        # x << 65 == 0
+        assert verify_equivalence("x << 65", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+
+    def test_shifts_x86_mask_semantics(self):
+        """Under x86 hardware semantics, shifts >= 64 are masked to 6 bits (0-63)."""
         # x << 64 == x << 0 == x
-        assert verify_equivalence("x << 64", "x")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x << 64", "x", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
 
         # x >> 64 == x >> 0 == x
-        assert verify_equivalence("x >> 64", "x")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x >> 64", "x", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
 
         # x << 65 == x << 1
-        assert verify_equivalence("x << 65", "x << 1")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x << 65", "x << 1", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
 
         # x >> 66 == x >> 2
-        assert verify_equivalence("x >> 66", "x >> 2")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x >> 66", "x >> 2", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
 
     def test_timeout_returns_unknown(self):
         """Solver timeout returns STATUS_UNKNOWN gracefully."""

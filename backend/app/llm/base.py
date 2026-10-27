@@ -6,7 +6,7 @@ They accept standard ChatML-style message dictionaries:
 and return the raw completion string.
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 
 class LLMBackendError(Exception):
@@ -23,7 +23,20 @@ class BaseLLMBackend(ABC):
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
         max_tokens: int = 512,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> str:
+        """Generates a completion given a sequence of ChatML-style messages.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'.
+            temperature: Sampling temperature (default 0.2 for low variance).
+            max_tokens: Maximum tokens to generate (default 512).
+            should_cancel: Optional callable returning True if execution was cancelled.
+
+        Returns:
+            The raw model output string (including any <think> reasoning blocks).
+        """
+        pass
         """Generates a completion given a sequence of ChatML-style messages.
 
         Args:

@@ -33,8 +33,8 @@ flowchart TD
 
         subgraph "Security & Parsing"
             LG -->|1. Raw Input| NodeAST[parse_ast Node]
-            NodeAST -->|Validate AST AST Nodes <= 5000 chars, depth <= 100| SafeAST{Is Safe?}
-            SafeAST -->|No| RejectNode[REJECTED_UNSAFE -> END]
+            NodeAST -->|Validate AST Nodes <= 5000 chars, depth <= 100| SafeAST{Is Safe?}
+            SafeAST -->|No: obf_nodes=0| RejectNode[REJECTED_UNSAFE -> END]
             SafeAST -->|Yes| ProposeNode[2. propose Node]
         end
 
@@ -48,9 +48,9 @@ flowchart TD
             VerifyNode -->|Parse Candidate AST| VerifySafety{Candidate Safe?}
             VerifySafety -->|No| FailAttempt[Record Failed Attempt]
             VerifySafety -->|Yes| Z3Miter[Z3 Solver: original != candidate]
-            Z3Miter -->|Timeout 3000ms / Unknown| Z3Timeout[UNKNOWN / TIMEOUT]
+            Z3Miter -->|Timeout Budget / Unknown| Z3Timeout[UNKNOWN / TIMEOUT]
             Z3Miter -->|Model Witness Found| Z3SAT[SAT: Counterexample Generated]
-            Z3Miter -->|No Counterexample Exists| Z3UNSAT[UNSAT: QF_BV_UNSAT_64BIT_VERIFIED]
+            Z3Miter -->|Unconstrained UNSAT| Z3UNSAT[UNSAT: QF_BV_UNSAT_64BIT_VERIFIED]
         end
 
         subgraph "Routing & Termination"
@@ -67,7 +67,7 @@ flowchart TD
     end
 
     subgraph "Telemetry & Observability"
-        LG -.->|Async WAL Writes| SQLite[(SQLite: runs & attempts)]
+        LG -.->|Dedicated Writer Queue| SQLite[(SQLite: runs & attempts in WAL mode)]
         LG -.->|Optional Trace Decorators| LangSmith[LangSmith Cloud Tracing]
     end
 
@@ -81,12 +81,13 @@ flowchart TD
 ### 3.1 State Schema (`PalimpsestState`)
 
 ```python
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import TypedDict, List, Optional, Dict, Any, Callable
 
 class AttemptRecord(TypedDict):
     iteration: int
     candidate: str
     raw_output: str
+    think: Optional[str]
     status: str            # "QF_BV_UNSAT_64BIT_VERIFIED" | "SAT" | "UNKNOWN" | "INVALID"
     latency_ms: float
     witness: Optional[Dict[str, int]]
@@ -101,6 +102,7 @@ class PalimpsestState(TypedDict):
     max_iterations: int
     current_candidate: Optional[str]
     current_raw_output: Optional[str]
+    current_think: Optional[str]
     verification_result: Optional[Dict[str, Any]]
     history: List[AttemptRecord]
     final_status: Optional[str]   # "VERIFIED_EQUIVALENT" | "FAILED" | "REJECTED_UNSAFE"
@@ -109,6 +111,8 @@ class PalimpsestState(TypedDict):
     compression_pct: Optional[float]
     error_message: Optional[str]
     temperature: float            # Adjusted upwards if model repeats candidates
+    feedback_message: Optional[str]
+    cancel_callback: Optional[Callable[[], bool]]
 ```
 
 ### 3.2 Graph Nodes
@@ -116,24 +120,27 @@ class PalimpsestState(TypedDict):
 1. **`parse_ast`**:
    - Validates input length ($\le 5000$ characters).
    - Parses AST with Python `ast.parse(expr, mode='eval')`.
-   - Enforces the strict Node allowlist and recursion depth threshold ($\le 100$).
-   - Calculates `obf_nodes` count.
+   - Enforces the strict Node allowlist, recursion depth threshold ($\le 100$), and rejects negative constant shift amounts.
+   - Calculates semantic `obf_nodes` count strictly over `BinOp`, `UnaryOp`, `Name`, and `Constant`.
+   - For unparseable or rejected input, `obf_nodes` is explicitly set to `0`.
    - Initializes `iteration = 0`, `history = []`, `temperature = 0.2`.
    - If invalid, sets `final_status = REJECTED_UNSAFE` and routes directly to `END`.
 
 2. **`propose`**:
+   - Checks `cancel_callback` at node entry; aborts immediately if client disconnected.
    - Assembles messages matching the training format:
      - Turn 1: `user` $\rightarrow$ `"De-obfuscate this 64-bit MBA expression:\n{expression}"`
      - CEGIS Turns: Formatted previous attempt + Z3 failure witness turn.
-   - Dispatches to configured backend (`fake`, `ollama`, or `llamacpp`).
+   - Dispatches to configured backend with timeout `MODEL_TIMEOUT_SECONDS`.
    - Extracts candidate string from output (lines following `</think>`).
    - Increments `iteration += 1`.
-   - Checks if candidate is identical to a prior failed attempt; if so, boosts `temperature += TEMP_RETRY_INCREMENT`.
+   - If candidate was already proposed in history, raises `temperature += TEMP_RETRY_INCREMENT`.
 
 3. **`verify`**:
+   - Checks `cancel_callback` at node entry.
    - Evaluates candidate string against security gate.
    - If candidate is syntactically invalid or unsafe, registers an `INVALID` attempt.
-   - Executes Z3 64-bit BitVec miter check with timeout (`3000ms`).
+   - Instantiates a fresh, isolated `z3.Context()` and executes the Z3 64-bit BitVec miter check.
    - Computes `diff_bits` when `status == "SAT"`.
    - Appends `AttemptRecord` to `history`.
 
@@ -144,10 +151,13 @@ class PalimpsestState(TypedDict):
 5. **`finalize_fail`**:
    - Sets `final_status = "FAILED"`.
 
-### 3.3 Conditional Router (`route_after_verify`)
-- If `status == "QF_BV_UNSAT_64BIT_VERIFIED"` $\rightarrow$ `finalize_success`
-- Else if `iteration >= max_iterations` $\rightarrow$ `finalize_fail`
-- Else $\rightarrow$ `propose` (CEGIS loop)
+### 3.3 Routing & Client-Side Graph Synchronization
+- Routing logic:
+  - If `status == "QF_BV_UNSAT_64BIT_VERIFIED"` $\rightarrow$ `finalize_success`
+  - Else if `iteration >= max_iterations` $\rightarrow$ `finalize_fail`
+  - Else $\rightarrow$ `propose` (CEGIS loop)
+- **Client-Side Router Node**:
+  The server emits events for the five functional nodes: `parse_ast`, `propose`, `verify`, `finalize_success`, `finalize_fail`. The "Router" node is drawn **client-side** in the React Flow graph: when a `verification` event arrives, the UI lights up the decision diamond; if followed by a `retry` event, the UI animates the return packet edge along the retry path back to `propose`.
 
 ---
 
@@ -158,40 +168,54 @@ class PalimpsestState(TypedDict):
 def verify_equivalence(
     original_expr: str,
     candidate_expr: str,
-    timeout_ms: int = 3000
+    timeout_ms: int = 3000,
+    shift_semantics: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Formally verifies equivalence; equivalence proven by Z3 (QF_BV, 64-bit).
+    Uses a fresh z3.Context() per call.
     Returns:
         status: "QF_BV_UNSAT_64BIT_VERIFIED" | "SAT" | "UNKNOWN" | "INVALID"
         witness: dict[str, int] (variable assignments disproving equivalence)
-        expected: int (original expression value at witness, 64-bit unsigned)
-        actual: int (candidate expression value at witness, 64-bit unsigned)
-        diff_bits: str (64-character binary string showing bit discrepancies)
+        expected: int | None (original expression value at witness, 64-bit unsigned)
+        actual: int | None (candidate expression value at witness, 64-bit unsigned)
+        diff_bits: str | None (64-character binary string showing bit discrepancies)
         latency_ms: float
+        error: str | None
     """
 ```
 
-### 4.2 AST to Z3 BitVec Translation Rules
-All variables and integer constants are mapped into 64-bit bit-vectors (`z3.BitVec(name, 64)` and `z3.BitVecVal(val & 0xFFFFFFFFFFFFFFFF, 64)`).
-- `+` $\rightarrow$ `x + y` (Bit-vector addition with implicit 64-bit unsigned modulo wrapping)
-- `-` $\rightarrow$ `x - y`
-- `*` $\rightarrow$ `x * y`
-- `&` $\rightarrow$ `x & y`
-- `|` $\rightarrow$ `x | y`
-- `^` $\rightarrow$ `x ^ y`
-- `~` $\rightarrow$ `~x`
-- `-x` (unary) $\rightarrow$ `-x`
-- `<<` $\rightarrow$ `x << (y & 63)` (Logical shift left, bounded by bit-width)
-- `>>` $\rightarrow$ `z3.LShR(x, y & 63)` (Logical shift right)
+### 4.2 Non-SAT Verification Contract & Retry Feedback Text
+- When `status != "SAT"`:
+  - `witness`: `{}` (empty dictionary)
+  - `expected`: `None`
+  - `actual`: `None`
+  - `diff_bits`: `None`
+- Exact Retry Feedback Strings:
+  - When status is `INVALID`:
+    ```
+    Z3_VERIFICATION_FAILED: INVALID
+    Error: <error_message>
+    ```
+  - When status is `UNKNOWN` (timeout):
+    ```
+    Z3_VERIFICATION_FAILED: UNKNOWN
+    Error: Z3 solver timeout or resource limit reached
+    ```
 
-### 4.3 Miter Formulation
-To prove equivalence:
-$$\exists x_1, x_2, \dots, x_k \in \mathbb{BV}_{64} \quad \text{s.t.} \quad E_{\text{orig}}(x_1, \dots, x_k) \neq E_{\text{cand}}(x_1, \dots, x_k)$$
+### 4.3 Shift Semantics & Isolation
+Configured via `SHIFT_SEMANTICS`:
+- **`z3` (Default)**: Standard Z3 / SMT-LIB / Python semantics where shift amounts $\ge 64$ evaluate to $0$.
+- **`x86_mask`**: Hardware masking where shift counts are masked to 6 bits (`shift & 63`), so `x << 64 == x`.
+- **Negative Shifts**: Constant negative shifts (`x << -1`, `x >> -2`) are rejected at the AST safety gate.
 
-- If solver returns **`UNSAT`**: No counterexample exists. Equivalence proven by Z3 (QF_BV, 64-bit) $\rightarrow$ `QF_BV_UNSAT_64BIT_VERIFIED`.
-- If solver returns **`SAT`**: Solver provides a concrete model $M$. We evaluate $E_{\text{orig}}$ and $E_{\text{cand}}$ under $M$ to obtain concrete integers `expected` and `actual`, and format the counterexample witness.
-- If solver returns **`UNKNOWN`** or times out ($> 3000\text{ ms}$): Verification fails gracefully without crashing.
+### 4.4 Cascading Bounds & Timeout Budget
+- Verification checks bounds in ascending order inside `push()` / `pop()`:
+  1. `ULT(v, 2)`: Evaluates binary assignments (yields canonical $x=1, y=1$).
+  2. `ULT(v, 16)`: Evaluates small integer assignments.
+  3. Fallback: Unconstrained 64-bit query.
+- **Critical Invariant**: Bounded `UNSAT` **never** yields `STATUS_VERIFIED`. Only the unconstrained query can emit `QF_BV_UNSAT_64BIT_VERIFIED`.
+- **Timeout Management**: Total duration across bounded and unconstrained queries is bounded by timeout plus overhead. Bounded queries receive small slices ($\le 15\%$), and the remainder is allocated to the unconstrained solver.
 
 ---
 
@@ -199,148 +223,161 @@ $$\exists x_1, x_2, \dots, x_k \in \mathbb{BV}_{64} \quad \text{s.t.} \quad E_{\
 
 PALIMPSEST processes untrusted expressions from arbitrary users and generated by local LLMs.
 Strict constraints are enforced:
-1. **Never `eval()` or `exec()`**: AST parsing and evaluation is done exclusively through safe recursive visitors building symbolic Z3 structures or counting nodes.
+1. **Never `eval()` or `exec()`**: All AST processing is done via safe node traversal.
 2. **Strict Node Whitelist**:
    - `ast.Expression`
-   - `ast.BinOp` with operators `Add`, `Sub`, `Mult`, `BitAnd`, `BitOr`, `BitXor`, `LShift`, `RShift`
-   - `ast.UnaryOp` with operators `Invert`, `USub`
+   - `ast.BinOp` with `Add`, `Sub`, `Mult`, `BitAnd`, `BitOr`, `BitXor`, `LShift`, `RShift`
+   - `ast.UnaryOp` with `Invert`, `USub`
    - `ast.Name` with `ast.Load`
-   - `ast.Constant` strictly restricted to `isinstance(node.value, int)`
+   - `ast.Constant` strictly restricted to `isinstance(node.value, int) and not isinstance(node.value, bool)`
    - All other AST types (`Call`, `Attribute`, `Import`, `Str`, `List`, `Lambda`, `Subscript`, etc.) trigger immediate rejection.
 3. **DoS Prevention**:
    - Input length limit: $\le 5,000$ characters.
    - Max AST recursion depth: $\le 100$ levels.
-4. **Execution Isolation**:
-   - Z3 solver invocations run within synchronous worker threads managed by FastAPI's `run_in_threadpool`, keeping the main async event loop responsive.
+4. **Host-Header Protection**:
+   FastAPI middleware validates `Host` headers, allowing only `localhost`, `127.0.0.1`, and test runners.
 
 ---
 
-## 6. Model Backends & Training Format Compatibility
+## 6. Model Backends & Concurrency Architecture
 
-### 6.1 Training Data Exact Prompt Format
-PALIMPSEST models are trained on specific ChatML message sequences.
-
-#### Turn 1 (Initial User Prompt):
+### 6.1 Backend Interface
+```python
+class BaseLLMBackend(ABC):
+    @abstractmethod
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> str:
+        pass
 ```
-De-obfuscate this 64-bit MBA expression:
-{expression}
-```
+- Real model backends stream tokens and check `should_cancel()` every chunk; fake backend checks `should_cancel()` at invocation.
+- `MODEL_TIMEOUT_SECONDS` is read from configuration (default: 10s).
 
-#### Turn 2 (Assistant Response):
-The assistant emits reasoning followed by the final candidate expression:
-```
-<think>
-[Template-generated reasoning steps]
-</think>
-x + y
-```
-
-#### Turn 3 (CEGIS Tool Feedback):
-When an attempt is rejected by Z3 with `SAT`, the feedback is formatted exactly:
-```
-Z3_VERIFICATION_FAILED: SAT
-Counterexample Witness: {'x': 1, 'y': 1}
-Expected: 2, Actual: 0
-```
-
-#### Turn 4 (Corrected Assistant Response):
-The assistant refines its hypothesis based on the concrete counterexample.
-
-### 6.2 [CONFIRM] Items & Config Defaults
-To guarantee smooth interoperability with the model trained by the teammate:
-1. **`TOOL_ROLE`**: Defaults to `"user"`. (Many standard ChatML templates do not define a separate `"tool"` role; configurable to `"tool"` via `.env`).
-2. **`SYSTEM_PROMPT`**: Defaults to `None` / empty string. (Qwen ChatML standard system prompts are suppressed unless explicitly configured).
-3. **`HISTORY_MODE`**: Defaults to `"last"`. (Training data only ever provided the most recent failed attempt in context. Configurable to `"all"`).
-4. **`Chat Template`**: ChatML format delivered via `Modelfile` for Ollama.
-
-### 6.3 Backend Abstraction Interface
-- `fake`: Pure deterministic backend for local dev, automated testing, and CI. Returns `x ^ y` on turn 1 (forcing a SAT counterexample), and `x + y` on turn 2 (achieving UNSAT proof).
-- `ollama`: Communicates via `ollama.chat` with local daemon on `http://localhost:11434`.
-- `llamacpp`: Loads GGUF weights via `llama-cpp-python` with multi-threaded CPU execution.
+### 6.2 Concurrency Policy: Single-Slot Lock & HTTP 429
+- Local CPU inference cannot handle concurrent runs.
+- A process-wide `run_lock = threading.Lock()` gates execution.
+- The handler attempts `run_lock.acquire(blocking=False)`.
+  - If busy: Returns **HTTP 429 Too Many Requests** immediately with `Retry-After: 5` and JSON `{"error": "PALIMPSEST is currently processing another de-obfuscation run. Only 1 local run is supported concurrently."}`.
+  - If acquired: Released strictly in the worker's `finally` block AND if the generator is never iterated.
+- Server runs with **1 uvicorn worker** (`workers=1`).
 
 ---
 
 ## 7. API & Streaming Protocol (SSE)
 
-### 7.1 Endpoints
-- `POST /api/run` — Initiates synthesis loop, streaming Server-Sent Events (SSE).
-- `GET /api/history?limit=50` — Retrieves paginated past runs from SQLite.
-- `GET /api/runs/{run_id}` — Retrieves detailed run data and attempt timeline.
-- `GET /api/stats` — Summary metrics (overall success rate, avg attempts, avg Z3 latency).
-- `GET /api/health` — System health check (active backend, model connectivity, Z3 status, LangSmith status).
-- `GET /api/examples` — Pre-loaded MBA expressions for interactive exploration.
-
-### 7.2 SSE Event Stream Contract
-Events are pushed using the standard `text/event-stream` protocol:
+### 7.1 Thread/Queue Bridge Architecture
 ```
-event: run_started
-data: {"run_id": "c1f7b0...", "expression": "(x ^ y) + 2 * (x & y)", "obf_nodes": 9, "max_iterations": 5, "backend": "fake"}
-
-event: node_started
-data: {"node": "parse_ast"}
-
-event: node_finished
-data: {"node": "parse_ast"}
-
-event: proposal
-data: {"iteration": 1, "raw_output": "<think>...</think>\nx ^ y", "think": "...", "candidate": "x ^ y"}
-
-event: verification
-data: {"iteration": 1, "candidate": "x ^ y", "status": "SAT", "latency_ms": 1.42, "witness": {"x": 1, "y": 1}, "expected": 2, "actual": 0, "diff_bits": "0000000000000000000000000000000000000000000000000000000000000010"}
-
-event: retry
-data: {"iteration": 1, "feedback_message": "Z3_VERIFICATION_FAILED: SAT\nCounterexample Witness: {'x': 1, 'y': 1}\nExpected: 2, Actual: 0"}
-
-event: final
-data: {"status": "VERIFIED_EQUIVALENT", "final_expr": "x + y", "obf_nodes": 9, "final_nodes": 3, "compression_pct": 66.67, "total_ms": 124.5, "attempts": 2}
+[FastAPI Async Loop]                              [Worker Thread]
+   POST /api/run
+     │
+     ├─► Creates asyncio.Queue()
+     ├─► Creates threading.Event() (cancel_event)
+     ├─► Spawns thread via asyncio.to_thread() ──► Runs LangGraph:
+     │                                               Checks cancel_event at boundaries
+  SSE StreamingResponse                              Emits ONLY via:
+     │◄─── loop.call_soon_threadsafe(queue.put) ─────┤ loop.call_soon_threadsafe(
+     │                                               │    queue.put_nowait, event)
+     ├─► Formats SSE chunk to client
+     ├─► try/finally:
+     │   generator close / disconnect ──────────────► cancel_event.set()
+     └─► 15-second heartbeat: yields ': ping\n\n'
 ```
 
+### 7.2 Exact Event Ordering (Frozen)
+The event stream contract freezes the emission order: **payload events are emitted BEFORE `node_finished`**.
+
+1. Normal Success Loop:
+   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend}`
+   - `node_started`: `{"node": "parse_ast"}`
+   - `node_finished`: `{"node": "parse_ast"}`
+   - *Iteration 1*:
+     - `node_started`: `{"node": "propose"}`
+     - `proposal`: `{iteration: 1, raw_output, think, candidate}`
+     - `node_finished`: `{"node": "propose"}`
+     - `node_started`: `{"node": "verify"}`
+     - `verification`: `{iteration: 1, candidate, status: "SAT", latency_ms, witness, expected, actual, diff_bits}`
+     - `node_finished`: `{"node": "verify"}`
+     - `retry`: `{iteration: 1, feedback_message}`
+   - *Iteration 2*:
+     - `node_started`: `{"node": "propose"}`
+     - `proposal`: `{iteration: 2, raw_output, think, candidate}`
+     - `node_finished`: `{"node": "propose"}`
+     - `node_started`: `{"node": "verify"}`
+     - `verification`: `{iteration: 2, candidate, status: "QF_BV_UNSAT_64BIT_VERIFIED", latency_ms, witness: {}, expected: null, actual: null, diff_bits: null}`
+     - `node_finished`: `{"node": "verify"}`
+   - `node_started`: `{"node": "finalize_success"}`
+   - `node_finished`: `{"node": "finalize_success"}`
+   - `final`: `{status: "VERIFIED_EQUIVALENT", final_expr, obf_nodes, final_nodes, compression_pct, total_ms, attempts, reason: null}`
+
+2. Failing Loop (Max Iterations Reached):
+   - Iterations $1 \dots K$ execute propose and verify.
+   - `node_started`: `{"node": "finalize_fail"}`
+   - `node_finished`: `{"node": "finalize_fail"}`
+   - `final`: `{status: "FAILED", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "..."}`
+
+3. Unsafe Input Sequence (`REJECTED_UNSAFE`):
+   - `run_started`: `{run_id, expression, obf_nodes: 0, max_iterations, backend}`
+   - `node_started`: `{"node": "parse_ast"}`
+   - `node_finished`: `{"node": "parse_ast"}`
+   - `final`: `{status: "REJECTED_UNSAFE", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>"}`
+
+4. Stream Termination Invariant:
+   - Exactly **ONE** of `final` OR `error` terminates the stream, followed by stream closure. They are mutually exclusive.
+
+### 7.3 String Serialization Contract
+- **SSE & REST JSON**: All 64-bit integer values (`expected`, `actual`, and all dictionary values in `witness`) are serialized strictly as **strings** (e.g. `"expected": "2"`, `"actual": "0"`, `"witness": {"x": "1", "y": "1"}`) to eliminate JavaScript IEEE 754 precision truncation on values $> 2^{53}-1$.
+- **Prompt Builder**: Preserves raw Python integer types (`{'x': 1, 'y': 1}`, `Expected: 2, Actual: 0`) character-for-character matching the teammate's training data.
+
 ---
 
-## 8. Frontend User Interface Architecture
+## 8. Telemetry & Persistence (SQLite WAL Mode)
 
-The frontend is built with React, Vite, TypeScript, and Tailwind CSS, featuring a cyber-lab forensic aesthetic.
+### 8.1 Schema
+- Database path: `palimpsest.sqlite` (gitignored).
+- Connection settings: `PRAGMA journal_mode = WAL;` and `PRAGMA busy_timeout = 5000;` on every connection.
+- Tables:
+  ```sql
+  CREATE TABLE IF NOT EXISTS runs (
+      run_id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      expression TEXT NOT NULL,
+      obf_nodes INTEGER NOT NULL,
+      final_status TEXT NOT NULL,
+      final_expr TEXT,
+      compression_pct REAL,
+      attempts INTEGER NOT NULL,
+      total_ms REAL NOT NULL,
+      backend TEXT NOT NULL,
+      max_iterations INTEGER NOT NULL
+  );
 
-### 8.1 Key Views & Components
-1. **Command Center**: Expression input with preset buttons, iteration slider, live backend/cloud status pills, and prominent synthesis trigger.
-2. **Live Loop Graph (React Flow)**: Visualizes `parse_ast`, `propose`, `verify`, `success`, and `fail`. Displays real-time node pulsing and animated counterexample return edges.
-3. **Attempt Timeline**: Collapsible reasoning logs, candidate cards, SAT/UNSAT badges, and Z3 timings.
-4. **Counterexample Bit Visualizer**: Interactive 64-bit grid highlighting discrepancies between `expected` and `actual` bit-vectors.
-5. **Proof & Compression Banner**: Prominent verification proof banner (green for Z3 verified, honest red for failure) and animated AST node compression percentage.
-6. **Explain Mode**: Contextual educational overlays explaining MBA, CEGIS, bit-vectors, and Z3 proofs for students and evaluators.
-7. **History & Insights**: Analytical dashboard with Recharts displaying historical run metrics and run replays.
+  CREATE TABLE IF NOT EXISTS attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      iteration INTEGER NOT NULL,
+      candidate TEXT NOT NULL,
+      status TEXT NOT NULL,
+      latency_ms REAL NOT NULL,
+      witness_json TEXT,
+      expected TEXT,
+      actual TEXT,
+      raw_output TEXT,
+      FOREIGN KEY (run_id) REFERENCES runs (run_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_attempts_run_id ON attempts(run_id);
+  ```
+- **Dedicated Writer Queue**: Telemetry writes are handled by a dedicated background async queue with error isolation (`try ... except`) so DB errors never interrupt runs.
+- **Cancellation**: Disconnected runs are recorded with `final_status = "CANCELLED"`.
 
 ---
 
-## 9. Telemetry & Persistence
+## 9. Frontend Architecture & Vite Dev Proxy
 
-- **SQLite WAL Mode**: `palimpsest.sqlite` initialized with `PRAGMA journal_mode=WAL;` and `PRAGMA busy_timeout=5000;`.
-- **Database Tables**:
-  - `runs`: `run_id`, `timestamp`, `expression`, `obf_nodes`, `final_status`, `final_expr`, `compression_pct`, `attempts`, `total_ms`, `backend`.
-  - `attempts`: `id`, `run_id`, `iteration`, `candidate`, `status`, `latency_ms`, `witness_json`, `expected`, `actual`.
-- **Async Execution**: SQLite writes are queued in background tasks so telemetry errors never interrupt synthesis.
-- **LangSmith Tracing**: Enabled conditionally via `LANGSMITH_TRACING=true`. When active, `@traceable` wraps `propose` (tagged as `llm`) and `verify` (tagged as `tool`), and the UI displays a persistent amber warning badge.
-
----
-
-## 10. Technology Dependencies
-
-| Component | Library / Tool | Version | Purpose |
-| :--- | :--- | :--- | :--- |
-| **Backend Framework** | `fastapi` | `0.115.8` | Async REST API & SSE streaming |
-| | `uvicorn[standard]` | `0.34.0` | ASGI server |
-| **Formal Logic** | `z3-solver` | `4.14.0.0` | 64-bit QF_BV Bit-Vector SMT solver |
-| **Agent Orchestration**| `langgraph` | `0.2.70` | CEGIS state machine & cycle routing |
-| | `langchain-core` | `0.3.35` | Core schema and message types |
-| **Telemetry & Observability**| `langsmith` | `0.3.8` | Optional tracing decorators |
-| | `aiosqlite` | `0.21.0` | Async SQLite with WAL support |
-| **Model Serving** | `ollama` | `0.4.7` | Python client for local Ollama |
-| | `llama-cpp-python` | `0.3.7` | In-process fallback GGUF execution |
-| **Frontend Framework** | `react` / `react-dom` | `^19.0.0` | Declarative UI |
-| | `vite` | `^6.1.0` | Fast build tool and dev server |
-| | `typescript` | `^5.7.3` | Type safety |
-| **Styling & Icons** | `tailwindcss` | `^4.0.0` | Utility CSS |
-| | `lucide-react` | `^0.475.0` | Cyber/forensic iconography |
-| **Graph & Visualization** | `@xyflow/react` | `^12.4.2` | Interactive LangGraph node visualization |
-| | `framer-motion` | `^12.4.2` | Smooth state transitions & packet animations |
-| | `recharts` | `^2.15.1` | Historical telemetry charts |
+- Built with React, Vite, TypeScript, Tailwind CSS, Framer Motion, and `@xyflow/react`.
+- **Vite Proxy**: `vite.config.ts` proxies `/api` requests to `http://127.0.0.1:8000`.
+- **Client Graph**: Visualizes live execution. The Router node is synthesized purely client-side from `verification` and `retry` events.

@@ -73,10 +73,12 @@ def make_propose_node(backend: BaseLLMBackend) -> Callable[[PalimpsestState], Di
         )
 
         # 2. Invoke model backend
+        cancel_callback = state.get("cancel_callback")
         raw_output = backend.generate(
             messages=messages,
             temperature=current_temp,
             max_tokens=512,
+            should_cancel=cancel_callback,
         )
 
         # 3. Extract candidate expression and thinking block

@@ -3,7 +3,7 @@
 `PalimpsestState` carries the state across each stage of the CEGIS loop:
 AST parsing -> Proposing hypothesis -> Z3 formal verification -> Routing -> Finalization.
 """
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, TypedDict
 
 
 class AttemptRecord(TypedDict):
@@ -38,4 +38,5 @@ class PalimpsestState(TypedDict):
     error_message: Optional[str]    # Detailed error message if rejected or failed
     temperature: float              # Current sampling temperature
     feedback_message: Optional[str] # Formatted feedback string from Z3 for the next prompt
+    cancel_callback: Optional[Callable[[], bool]] # Optional check to halt on client disconnect
 

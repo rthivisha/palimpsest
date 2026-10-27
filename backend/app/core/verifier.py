@@ -33,9 +33,14 @@ on small inputs but divergent on large inputs. Only the unconstrained solver che
 can emit `QF_BV_UNSAT_64BIT_VERIFIED`.
 
 Timeout Management:
-One shared timeout budget (`timeout_ms`) is strictly enforced across all phases,
-with small slices allocated to the bounded queries so total elapsed latency stays
-within the configured limit.
+One shared timeout budget (`timeout_ms`) is enforced across all phases,
+with small slices allocated to the bounded queries so total elapsed latency
+is bounded by timeout plus overhead.
+
+Shift Semantics:
+Configurable via `settings.SHIFT_SEMANTICS`:
+- "z3" (default): standard Z3 / SMT-LIB / Python semantics where shifts >= 64 evaluate to 0.
+- "x86_mask": hardware semantics where the shift amount is masked to 6 bits (`shift & 63`).
 """
 import ast
 import time
@@ -43,6 +48,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import z3
 
+from backend.app.config import settings
 from backend.app.core.safety import validate_ast, SafetyViolationError
 from backend.app.core.ast_utils import extract_variables
 
@@ -53,7 +59,7 @@ BIT_WIDTH: int = 64
 # Bit mask to clamp integer values to unsigned 64-bit integers
 UINT64_MASK: int = 0xFFFFFFFFFFFFFFFF
 
-# Shift mask (x86-64 shifts by count mod 64)
+# Shift mask for x86 hardware semantics (x86-64 shifts by count mod 64)
 SHIFT_MASK: int = 63
 
 # Status string constants matching the dataset generator and runtime contract
@@ -68,23 +74,20 @@ class Z3TranslationError(Exception):
     pass
 
 
-def _ast_to_z3(node: ast.AST, var_map: Dict[str, z3.BitVecRef]) -> z3.BitVecRef:
-    """Recursively converts a validated Python AST into a Z3 BitVec expression tree.
-
-    Args:
-        node: The AST node to translate.
-        var_map: Mapping from variable names to shared z3.BitVec instances.
-
-    Returns:
-        A 64-bit Z3 BitVec expression.
-    """
+def _ast_to_z3(
+    node: ast.AST,
+    var_map: Dict[str, z3.BitVecRef],
+    ctx: z3.Context,
+    shift_semantics: str = "z3",
+) -> z3.BitVecRef:
+    """Recursively converts a validated Python AST into a Z3 BitVec expression tree."""
     if isinstance(node, ast.Expression):
-        return _ast_to_z3(node.body, var_map)
+        return _ast_to_z3(node.body, var_map, ctx, shift_semantics)
 
     # Identifiers: return the shared 64-bit BitVec for this variable name
     elif isinstance(node, ast.Name):
         if node.id not in var_map:
-            var_map[node.id] = z3.BitVec(node.id, BIT_WIDTH)
+            var_map[node.id] = z3.BitVec(node.id, BIT_WIDTH, ctx=ctx)
         return var_map[node.id]
 
     # Constants: mask to 64-bit unsigned integer and construct BitVecVal
@@ -92,24 +95,22 @@ def _ast_to_z3(node: ast.AST, var_map: Dict[str, z3.BitVecRef]) -> z3.BitVecRef:
         if type(node.value) is not int or isinstance(node.value, bool):
             raise Z3TranslationError(f"Constant must be integer, got {node.value}")
         masked_val = node.value & UINT64_MASK
-        return z3.BitVecVal(masked_val, BIT_WIDTH)
+        return z3.BitVecVal(masked_val, BIT_WIDTH, ctx=ctx)
 
     # Unary operations: bitwise NOT (~) and negation (-)
     elif isinstance(node, ast.UnaryOp):
-        operand_bv = _ast_to_z3(node.operand, var_map)
+        operand_bv = _ast_to_z3(node.operand, var_map, ctx, shift_semantics)
         if isinstance(node.op, ast.Invert):
-            # Bitwise NOT (~)
             return ~operand_bv
         elif isinstance(node.op, ast.USub):
-            # Two's complement unary minus (-x)
             return -operand_bv
         else:
             raise Z3TranslationError(f"Unsupported unary operator: {type(node.op).__name__}")
 
     # Binary operations
     elif isinstance(node, ast.BinOp):
-        left_bv = _ast_to_z3(node.left, var_map)
-        right_bv = _ast_to_z3(node.right, var_map)
+        left_bv = _ast_to_z3(node.left, var_map, ctx, shift_semantics)
+        right_bv = _ast_to_z3(node.right, var_map, ctx, shift_semantics)
 
         if isinstance(node.op, ast.Add):
             return left_bv + right_bv
@@ -124,13 +125,19 @@ def _ast_to_z3(node: ast.AST, var_map: Dict[str, z3.BitVecRef]) -> z3.BitVecRef:
         elif isinstance(node.op, ast.BitXor):
             return left_bv ^ right_bv
         elif isinstance(node.op, ast.LShift):
-            # Left shift: mask shift amount to 6 bits (0-63), matching x86-64 hardware semantics
-            shift_amt = right_bv & z3.BitVecVal(SHIFT_MASK, BIT_WIDTH)
-            return left_bv << shift_amt
+            if shift_semantics == "x86_mask":
+                shift_amt = right_bv & z3.BitVecVal(SHIFT_MASK, BIT_WIDTH, ctx=ctx)
+                return left_bv << shift_amt
+            else:
+                # Default Z3 / Python semantics: shift >= 64 evaluates to 0
+                return left_bv << right_bv
         elif isinstance(node.op, ast.RShift):
-            # Logical shift right (LShR): zeros are shifted in from the left
-            shift_amt = right_bv & z3.BitVecVal(SHIFT_MASK, BIT_WIDTH)
-            return z3.LShR(left_bv, shift_amt)
+            if shift_semantics == "x86_mask":
+                shift_amt = right_bv & z3.BitVecVal(SHIFT_MASK, BIT_WIDTH, ctx=ctx)
+                return z3.LShR(left_bv, shift_amt)
+            else:
+                # Default Z3 / Python semantics: logical right shift >= 64 evaluates to 0
+                return z3.LShR(left_bv, right_bv)
         else:
             raise Z3TranslationError(f"Unsupported binary operator: {type(node.op).__name__}")
 
@@ -141,17 +148,19 @@ def _ast_to_z3(node: ast.AST, var_map: Dict[str, z3.BitVecRef]) -> z3.BitVecRef:
 def verify_equivalence(
     original_expr: str,
     candidate_expr: str,
-    timeout_ms: int = 3000
+    timeout_ms: int = 3000,
+    shift_semantics: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Formally verifies whether original_expr and candidate_expr are equivalent.
 
     Performs a formal miter check using Z3 QF_BV (Quantifier-Free Bit-Vectors).
+    Uses a fresh z3.Context() per call for isolation and thread safety.
 
     Strategy:
     1. Bounded checks: Tests bounds in order `ULT(v, 2)` then `ULT(v, 16)` inside push/pop
        to prefer small witnesses (such as x=1, y=1) matching training data.
     2. Shared timeout budget: Total solver duration across bounded and unconstrained queries
-       is strictly bounded by `timeout_ms`.
+       is bounded by timeout plus overhead.
     3. Unconstrained fallback: If bounded checks return UNSAT or UNKNOWN, pops bounds and
        executes the unconstrained query. Bounded UNSAT never returns verified; only
        unconstrained UNSAT yields `QF_BV_UNSAT_64BIT_VERIFIED`.
@@ -160,11 +169,13 @@ def verify_equivalence(
         original_expr: The original obfuscated MBA expression string.
         candidate_expr: The model-proposed simplified expression string.
         timeout_ms: Total solver timeout budget in milliseconds (default: 3000ms).
+        shift_semantics: "z3" (default) or "x86_mask".
 
     Returns:
         Dict containing status, witness, expected, actual, diff_bits, latency_ms.
     """
     start_time = time.perf_counter()
+    semantics = shift_semantics or settings.SHIFT_SEMANTICS
 
     # 1. Security Gate & AST Validation
     try:
@@ -182,17 +193,19 @@ def verify_equivalence(
             "error": str(err),
         }
 
-    # 2. Variable Discovery & Shared Z3 Allocation
-    # All variables across both expressions must share the exact same Z3 BitVec symbols.
+    # 2. Allocate fresh, thread-isolated Z3 Context
+    ctx = z3.Context()
+
+    # 3. Variable Discovery & Shared Z3 Allocation inside this context
     all_vars: Set[str] = set(extract_variables(orig_ast)) | set(extract_variables(cand_ast))
     var_map: Dict[str, z3.BitVecRef] = {
-        var_name: z3.BitVec(var_name, BIT_WIDTH) for var_name in all_vars
+        var_name: z3.BitVec(var_name, BIT_WIDTH, ctx=ctx) for var_name in all_vars
     }
 
-    # 3. Translate ASTs to Z3 BitVec expressions
+    # 4. Translate ASTs to Z3 BitVec expressions
     try:
-        z3_orig = _ast_to_z3(orig_ast, var_map)
-        z3_cand = _ast_to_z3(cand_ast, var_map)
+        z3_orig = _ast_to_z3(orig_ast, var_map, ctx, semantics)
+        z3_cand = _ast_to_z3(cand_ast, var_map, ctx, semantics)
     except Z3TranslationError as err:
         latency_ms = (time.perf_counter() - start_time) * 1000.0
         return {
@@ -205,11 +218,11 @@ def verify_equivalence(
             "error": str(err),
         }
 
-    # 4. Construct SMT Miter: original != candidate
-    solver = z3.Solver()
+    # 5. Construct SMT Miter: original != candidate
+    solver = z3.Solver(ctx=ctx)
     solver.add(z3_orig != z3_cand)
 
-    # 5. Shared Timeout Budget: Try bounded checks in ascending order: ULT(v, 2) then ULT(v, 16)
+    # 6. Shared Timeout Budget: Try bounded checks in ascending order: ULT(v, 2) then ULT(v, 16)
     witness_bounds = [2, 16]
     bounded_sat_found = False
     chosen_model = None
@@ -237,7 +250,7 @@ def verify_equivalence(
         else:
             solver.pop()
 
-    # 6. If no bounded counterexample was found, fall back to unconstrained query
+    # 7. If no bounded counterexample was found, fall back to unconstrained query
     if not bounded_sat_found:
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
         remaining_ms = int(timeout_ms - elapsed_ms)
@@ -283,7 +296,7 @@ def verify_equivalence(
                 "error": "Z3 solver returned UNKNOWN (timeout or resource limit reached)",
             }
 
-    # 7. Extract counterexample witness from the satisfying model
+    # 8. Extract counterexample witness from the satisfying model
     witness: Dict[str, int] = {}
     for var_name, z3_var in sorted(var_map.items()):
         evaluated = chosen_model.eval(z3_var, model_completion=True)

@@ -10,8 +10,8 @@ Stateless behavior:
 - Can also be initialized with custom sequence of guesses or an always-wrong candidate
   to verify loop termination on max iterations.
 """
-from typing import Dict, List, Optional
-from backend.app.llm.base import BaseLLMBackend
+from typing import Callable, Dict, List, Optional
+from backend.app.llm.base import BaseLLMBackend, LLMBackendError
 
 
 DEFAULT_THINK_TURN1 = (
@@ -56,8 +56,12 @@ class FakeLLMBackend(BaseLLMBackend):
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
         max_tokens: int = 512,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Returns scripted completion based on message count or provided sequence."""
+        if should_cancel and should_cancel():
+            raise LLMBackendError("Inference cancelled by client disconnect")
+
         self.call_count += 1
 
         # 1. Custom raw outputs take highest priority

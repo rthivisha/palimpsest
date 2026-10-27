@@ -133,6 +133,13 @@ def validate_ast(expr_str: str) -> ast.Expression:
                 raise SafetyViolationError(
                     f"Disallowed binary operator '{type(node.op).__name__}'. Allowed: +, -, *, &, |, ^, <<, >>."
                 )
+            # Reject negative constant shift amounts (e.g. x << -1 or x >> -2)
+            if isinstance(node.op, (ast.LShift, ast.RShift)):
+                if isinstance(node.right, ast.Constant) and isinstance(node.right.value, int) and node.right.value < 0:
+                    raise SafetyViolationError(f"Negative constant shift amount {node.right.value} is not allowed.")
+                if isinstance(node.right, ast.UnaryOp) and isinstance(node.right.op, ast.USub):
+                    if isinstance(node.right.operand, ast.Constant):
+                        raise SafetyViolationError("Negative constant shift amount is not allowed.")
 
         # Enforce operator whitelist on UnaryOp nodes
         elif isinstance(node, ast.UnaryOp):
