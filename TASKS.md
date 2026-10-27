@@ -13,25 +13,25 @@
 ---
 
 ## Phase 1: Core Verification & Security Infrastructure
-- [ ] Implement `backend/app/core/safety.py`:
-  - [ ] Strict AST allowlist checker (`Expression`, `BinOp`, `UnaryOp`, `Name`, `Constant(int)`, `Load`, arithmetic & bitwise operators)
-  - [ ] Rejection of dangerous nodes (`Call`, `Attribute`, `Import`, strings, floats, lambdas)
-  - [ ] Input length limit enforcement ($\le 5000$ chars) and recursion depth check ($\le 100$)
-- [ ] Implement `backend/app/core/ast_utils.py`:
-  - [ ] AST node counter (`count_nodes`)
-  - [ ] AST variable extractor (`extract_variables`)
-  - [ ] Expression pretty-printer / normalizer
-- [ ] Implement `backend/app/core/verifier.py`:
-  - [ ] AST to Z3 BitVec 64-bit expression translator
-  - [ ] Constant 64-bit masking (`val & 0xFFFFFFFFFFFFFFFF`)
-  - [ ] Operator mapping with logical right-shift (`LShR`)
-  - [ ] Z3 miter solver check with configurable timeout (`3000ms`)
-  - [ ] Counterexample witness generation, concrete expected/actual evaluation, and 64-bit diff calculation
-- [ ] Implement unit tests in `backend/tests/test_core.py`:
-  - [ ] Test safety gate allowlist and edge case rejection
-  - [ ] Test known MBA identities return UNSAT
-  - [ ] Test wrong candidates return SAT with valid witness
-  - [ ] Test 64-bit overflow and shift behaviors
+- [x] Implement `backend/app/core/safety.py`:
+  - [x] Strict AST allowlist checker (`Expression`, `BinOp`, `UnaryOp`, `Name`, `Constant(int)`, `Load`, arithmetic & bitwise operators)
+  - [x] Rejection of dangerous nodes (`Call`, `Attribute`, `Import`, strings, floats, lambdas)
+  - [x] Input length limit enforcement ($\le 5000$ chars) and recursion depth check ($\le 100$)
+- [x] Implement `backend/app/core/ast_utils.py`:
+  - [x] AST node counter (`count_nodes`)
+  - [x] AST variable extractor (`extract_variables`)
+  - [x] Expression pretty-printer / normalizer
+- [x] Implement `backend/app/core/verifier.py`:
+  - [x] AST to Z3 BitVec 64-bit expression translator
+  - [x] Constant 64-bit masking (`val & 0xFFFFFFFFFFFFFFFF`)
+  - [x] Operator mapping with logical right-shift (`LShR`)
+  - [x] Z3 miter solver check with configurable timeout (`3000ms`)
+  - [x] Counterexample witness generation, concrete expected/actual evaluation, and 64-bit diff calculation
+- [x] Implement unit tests in `backend/tests/test_core.py`:
+  - [x] Test safety gate allowlist and edge case rejection
+  - [x] Test known MBA identities return UNSAT
+  - [x] Test wrong candidates return SAT with valid witness
+  - [x] Test 64-bit overflow and shift behaviors
 - [ ] Commit & Git Tag: `phase-1-complete`
 - [ ] **STOP AND REQUEST USER REVIEW**
 

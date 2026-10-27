@@ -1,0 +1,28 @@
+# PALIMPSEST Backend Dependencies
+# Pinned for reproducibility across Windows, Mac, and Linux
+
+# Web & API framework
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.7.1
+httpx==0.28.1
+
+# Formal Verification (Z3 SMT solver)
+z3-solver==4.14.0.0
+
+# Neurosymbolic / Agent orchestration
+langgraph==0.2.70
+langchain-core==0.3.35
+
+# Telemetry & Observability
+langsmith==0.3.8
+aiosqlite==0.21.0
+
+# Local Model Backends
+ollama==0.4.7
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.3
+
