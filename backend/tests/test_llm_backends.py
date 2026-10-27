@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from backend.app.llm.base import LLMBackendError
+from backend.app.llm.base import BaseLLMBackend, LLMBackendError
 from backend.app.llm.factory import get_backend
 from backend.app.llm.fake import FakeLLMBackend
 from backend.app.llm.llamacpp_backend import LlamaCppBackend
@@ -95,6 +95,85 @@ class TestPromptFormatTrainingExact:
         assert "<think>" in messages[1]["content"]
         assert messages[2]["role"] == "user"
         assert "Z3_VERIFICATION_FAILED: SAT" in messages[2]["content"]
+
+    def test_captured_messages_sent_to_backend_exact_match(self):
+        """Captures messages actually passed from nodes.py to backend.generate and verifies exact match."""
+        from backend.app.graph.nodes import make_propose_node
+
+        captured_calls = []
+
+        class SpyBackend(BaseLLMBackend):
+            def generate(self, messages, temperature=0.2, max_tokens=512, should_cancel=None):
+                captured_calls.append(list(messages))
+                if len(captured_calls) == 1:
+                    return "<think>\nAnalyzing MBA expression...\n</think>\n(x + y) - 1"
+                return "<think>\nApplying counterexample repair...\n</think>\nx + y"
+
+        backend = SpyBackend()
+        propose_node = make_propose_node(backend)
+
+        # Turn 1: Initial invocation
+        state_t1 = {
+            "obfuscated_expr": "(x ^ y) + 2 * (x & y)",
+            "history": [],
+            "temperature": 0.2,
+        }
+        res_t1 = propose_node(state_t1)
+        assert res_t1["current_candidate"] == "(x + y) - 1"
+        assert len(captured_calls) == 1
+
+        # Turn 1 exact prompt comparison
+        expected_t1_messages = [
+            {
+                "role": "user",
+                "content": "De-obfuscate this 64-bit MBA expression:\n(x ^ y) + 2 * (x & y)",
+            }
+        ]
+        assert captured_calls[0] == expected_t1_messages
+        assert captured_calls[0][0]["content"] == "De-obfuscate this 64-bit MBA expression:\n(x ^ y) + 2 * (x & y)"
+
+        # Turn 2: Follow-up after Z3 counterexample feedback
+        history_t2 = [
+            {
+                "iteration": 1,
+                "candidate": "(x + y) - 1",
+                "raw_output": "<think>\nAnalyzing MBA expression...\n</think>\n(x + y) - 1",
+                "status": "SAT",
+                "witness": {"x": 1, "y": 1},
+                "expected": 2,
+                "actual": 0,
+            }
+        ]
+        state_t2 = {
+            "obfuscated_expr": "(x ^ y) + 2 * (x & y)",
+            "history": history_t2,
+            "temperature": 0.2,
+        }
+        res_t2 = propose_node(state_t2)
+        assert res_t2["current_candidate"] == "x + y"
+        assert len(captured_calls) == 2
+
+        # Turn 2 exact prompt comparison
+        expected_t2_messages = [
+            {
+                "role": "user",
+                "content": "De-obfuscate this 64-bit MBA expression:\n(x ^ y) + 2 * (x & y)",
+            },
+            {
+                "role": "assistant",
+                "content": "<think>\nAnalyzing MBA expression...\n</think>\n(x + y) - 1",
+            },
+            {
+                "role": "user",
+                "content": "Z3_VERIFICATION_FAILED: SAT\nCounterexample Witness: {'x': 1, 'y': 1}\nExpected: 2, Actual: 0",
+            },
+        ]
+        assert captured_calls[1] == expected_t2_messages
+        assert captured_calls[1][2]["content"] == (
+            "Z3_VERIFICATION_FAILED: SAT\n"
+            "Counterexample Witness: {'x': 1, 'y': 1}\n"
+            "Expected: 2, Actual: 0"
+        )
 
     def test_candidate_extraction_with_and_without_think(self):
         """Extracts simplified candidate following </think> accurately."""

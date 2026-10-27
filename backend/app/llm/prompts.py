@@ -35,17 +35,21 @@ def format_initial_prompt(expression: str) -> str:
 
 
 def format_z3_feedback(
-    witness: Dict[str, int],
-    expected: Optional[int],
-    actual: Optional[int],
-    status: str = "SAT"
+    witness: Optional[Dict[str, int]] = None,
+    expected: Optional[int] = None,
+    actual: Optional[int] = None,
+    status: str = "SAT",
+    error: Optional[str] = None,
 ) -> str:
     """Formats the Z3 counterexample feedback turn matching training format."""
-    return (
-        f"Z3_VERIFICATION_FAILED: {status}\n"
-        f"Counterexample Witness: {witness}\n"
-        f"Expected: {expected}, Actual: {actual}"
-    )
+    if status == "SAT":
+        return (
+            f"Z3_VERIFICATION_FAILED: SAT\n"
+            f"Counterexample Witness: {witness or {}}\n"
+            f"Expected: {expected}, Actual: {actual}"
+        )
+    clean_err = " ".join(str(error or "Verification failed").splitlines())[:200].strip()
+    return f"Z3_VERIFICATION_FAILED: {status}\nError: {clean_err}"
 
 
 def build_messages(
@@ -113,7 +117,8 @@ def build_messages(
         expected = att.get("expected")
         actual = att.get("actual")
         status = att.get("status", "SAT")
-        feedback_text = format_z3_feedback(witness, expected, actual, status=status)
+        error = att.get("error")
+        feedback_text = format_z3_feedback(witness, expected, actual, status=status, error=error)
 
         messages.append({
             "role": tool_role,

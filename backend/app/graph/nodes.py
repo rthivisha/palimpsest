@@ -19,7 +19,6 @@ from backend.app.llm.prompts import (
     build_messages,
     extract_candidate,
     extract_think,
-    format_z3_feedback,
 )
 
 
@@ -135,21 +134,6 @@ def verify_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None)
         timeout_ms=settings.Z3_TIMEOUT_MS,
     )
 
-    # Format feedback message for the CEGIS loop if not verified
-    feedback_msg: Optional[str] = None
-    if verif["status"] == STATUS_SAT:
-        feedback_msg = format_z3_feedback(
-            witness=verif["witness"],
-            expected=verif["expected"],
-            actual=verif["actual"],
-            status="SAT",
-        )
-    elif verif["status"] != STATUS_VERIFIED:
-        raw_err = verif.get("error") or "Verification failed"
-        # Sanitize error: strictly single-line, truncated to ~200 chars, never raw model output
-        clean_err = " ".join(str(raw_err).splitlines())[:200].strip()
-        feedback_msg = f"Z3_VERIFICATION_FAILED: {verif['status']}\nError: {clean_err}"
-
     # Build telemetry record
     attempt: AttemptRecord = {
         "iteration": iteration,
@@ -169,7 +153,6 @@ def verify_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None)
     return {
         "verification_result": verif,
         "history": updated_history,
-        "feedback_message": feedback_msg,
     }
 
 

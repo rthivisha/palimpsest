@@ -243,17 +243,13 @@ def run_synthesis_worker(
 
             elif iteration < max_iterations:
                 # Prepare feedback message for next iteration
-                if verif["status"] == STATUS_SAT:
-                    feedback_msg = format_z3_feedback(
-                        witness=verif["witness"],
-                        expected=verif["expected"],
-                        actual=verif["actual"],
-                        status="SAT",
-                    )
-                else:
-                    raw_err = verif.get("error") or "Verification failed"
-                    clean_err = " ".join(str(raw_err).splitlines())[:200].strip()
-                    feedback_msg = f"Z3_VERIFICATION_FAILED: {verif['status']}\nError: {clean_err}"
+                feedback_msg = format_z3_feedback(
+                    witness=verif.get("witness"),
+                    expected=verif.get("expected"),
+                    actual=verif.get("actual"),
+                    status=verif["status"],
+                    error=verif.get("error"),
+                )
 
                 dispatch("retry", {
                     "iteration": iteration,
