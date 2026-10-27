@@ -107,8 +107,9 @@ def make_propose_node(backend: BaseLLMBackend) -> Callable[[PalimpsestState], Di
 def verify_node(state: PalimpsestState) -> Dict[str, Any]:
     """Node 3: Formal Z3 64-bit BitVec miter check.
 
-    Judges whether candidate == original across all 2^64 inputs.
-    Records concrete counterexample if SAT.
+    Judges whether candidate is equivalent to original.
+    Equivalence proven by Z3 (QF_BV, 64-bit) if UNSAT.
+    Records concrete counterexample witness if SAT.
     """
     orig_expr = state["obfuscated_expr"]
     cand_expr = state.get("current_candidate") or ""
@@ -195,3 +196,4 @@ def finalize_fail_node(state: PalimpsestState) -> Dict[str, Any]:
         "compression_pct": 0.0,
         "error_message": f"Could not prove equivalence within {max_iter} attempts. No unverified answer accepted.",
     }
+

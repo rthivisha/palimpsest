@@ -8,17 +8,24 @@ Instead, we construct an SMT "miter circuit" in Microsoft Z3 using the Quantifie
 Bit-Vector (QF_BV) theory:
     miter = (E_original != E_candidate)
 
-We ask the Z3 solver: "Does there exist ANY 64-bit input combination (x, y, ...)
+We ask the Z3 solver: "Does there exist any counterexample witness (x, y, ...)
 such that E_original != E_candidate?"
 
 Two mathematical outcomes are possible:
 1. UNSAT (Unsatisfiable):
-   No counterexample exists in the entire 2^64 input space. The candidate is PROVEN
-   100% equivalent to the original expression. We accept it.
+   No counterexample exists. Equivalence proven by Z3 (QF_BV, 64-bit).
 2. SAT (Satisfiable):
    The solver synthesizes a concrete counterexample witness (e.g., x=1, y=1) where
    the original and candidate evaluate to different values (e.g., expected=2, actual=0).
    We extract this witness and feed it back into the CEGIS loop to guide the next proposal.
+
+Witness Bounding Strategy:
+Training witnesses in the fine-tuning dataset are small integers (e.g. x=1, y=1).
+To prevent Z3 from emitting large arbitrary 64-bit numbers when small witnesses exist,
+`verify_equivalence` executes a two-phase check:
+- Phase 1: Try a bounded query with every variable constrained to `z3.ULT(v, 16)` inside push/pop.
+- Phase 2: If the bounded query returns UNSAT or UNKNOWN, pop the bounds and fall back to the
+           unconstrained query.
 """
 import ast
 import time
@@ -38,6 +45,9 @@ UINT64_MASK: int = 0xFFFFFFFFFFFFFFFF
 
 # Shift mask (x86-64 shifts by count mod 64)
 SHIFT_MASK: int = 63
+
+# Bounded witness upper bound (exclusive: 0 <= v < 16)
+WITNESS_UPPER_BOUND: int = 16
 
 # Status string constants matching the dataset generator and runtime contract
 STATUS_VERIFIED: str = "QF_BV_UNSAT_64BIT_VERIFIED"
@@ -126,9 +136,14 @@ def verify_equivalence(
     candidate_expr: str,
     timeout_ms: int = 3000
 ) -> Dict[str, Any]:
-    """Formally verifies whether original_expr == candidate_expr for all 64-bit inputs.
+    """Formally verifies whether original_expr and candidate_expr are equivalent.
 
     Performs a formal miter check using Z3 QF_BV (Quantifier-Free Bit-Vectors).
+    Uses a two-phase check:
+    1. Bounded check: restricts all variables to `ULT(v, 16)` inside push/pop to
+       prioritize small, interpretable counterexample witnesses matching training data.
+    2. Unconstrained check: if the bounded query is UNSAT, pops bounds to verify
+       full 64-bit equivalence.
 
     Args:
         original_expr: The original obfuscated MBA expression string.
@@ -193,11 +208,23 @@ def verify_equivalence(
     solver.set("timeout", timeout_ms)
     solver.add(z3_orig != z3_cand)
 
-    # 5. Check Equivalence
+    # 5. Two-phase verification:
+    # Phase 1: Bounded query for small counterexamples (v < 16) inside push/pop
+    solver.push()
+    for z3_var in var_map.values():
+        solver.add(z3.ULT(z3_var, WITNESS_UPPER_BOUND))
+
     check_res = solver.check()
+    is_bounded_sat = (check_res == z3.sat)
+
+    # Phase 2: If bounded query did not find a counterexample, fall back to unconstrained query
+    if not is_bounded_sat:
+        solver.pop()
+        check_res = solver.check()
+
     latency_ms = (time.perf_counter() - start_time) * 1000.0
 
-    # Case A: UNSAT -> Provably equivalent
+    # Case A: UNSAT -> Equivalence proven by Z3 (QF_BV, 64-bit)
     if check_res == z3.unsat:
         return {
             "status": STATUS_VERIFIED,
@@ -209,15 +236,14 @@ def verify_equivalence(
             "error": None,
         }
 
-    # Case B: SAT -> Counterexample witness exists
+    # Case B: SAT -> Counterexample witness exists (either bounded or unconstrained)
     elif check_res == z3.sat:
         model = solver.model()
         witness: Dict[str, int] = {}
 
-        # Extract concrete 64-bit integer values for all variables
+        # Extract concrete integer values for all variables
         for var_name, z3_var in sorted(var_map.items()):
             evaluated = model.eval(z3_var, model_completion=True)
-            # Default to 0 if variable is unconstrained
             val = evaluated.as_long() if hasattr(evaluated, "as_long") else 0
             witness[var_name] = val & UINT64_MASK
 
@@ -231,6 +257,9 @@ def verify_equivalence(
         # Calculate 64-bit binary diff string: bit i is '1' if expected and actual differ
         diff_bits = format(expected_val ^ actual_val, "064b")
 
+        if is_bounded_sat:
+            solver.pop()
+
         return {
             "status": STATUS_SAT,
             "witness": witness,
@@ -243,6 +272,8 @@ def verify_equivalence(
 
     # Case C: UNKNOWN (Timeout or solver limit reached)
     else:
+        if is_bounded_sat:
+            solver.pop()
         return {
             "status": STATUS_UNKNOWN,
             "witness": {},

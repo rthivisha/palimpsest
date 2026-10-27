@@ -161,7 +161,7 @@ def verify_equivalence(
     timeout_ms: int = 3000
 ) -> Dict[str, Any]:
     """
-    Formally verifies whether original_expr == candidate_expr for all 64-bit inputs.
+    Formally verifies equivalence; equivalence proven by Z3 (QF_BV, 64-bit).
     Returns:
         status: "QF_BV_UNSAT_64BIT_VERIFIED" | "SAT" | "UNKNOWN" | "INVALID"
         witness: dict[str, int] (variable assignments disproving equivalence)
@@ -189,7 +189,7 @@ All variables and integer constants are mapped into 64-bit bit-vectors (`z3.BitV
 To prove equivalence:
 $$\exists x_1, x_2, \dots, x_k \in \mathbb{BV}_{64} \quad \text{s.t.} \quad E_{\text{orig}}(x_1, \dots, x_k) \neq E_{\text{cand}}(x_1, \dots, x_k)$$
 
-- If solver returns **`UNSAT`**: No counterexample exists in the entire $2^{64k}$ input space. The expressions are provably equivalent $\rightarrow$ `QF_BV_UNSAT_64BIT_VERIFIED`.
+- If solver returns **`UNSAT`**: No counterexample exists. Equivalence proven by Z3 (QF_BV, 64-bit) $\rightarrow$ `QF_BV_UNSAT_64BIT_VERIFIED`.
 - If solver returns **`SAT`**: Solver provides a concrete model $M$. We evaluate $E_{\text{orig}}$ and $E_{\text{cand}}$ under $M$ to obtain concrete integers `expected` and `actual`, and format the counterexample witness.
 - If solver returns **`UNKNOWN`** or times out ($> 3000\text{ ms}$): Verification fails gracefully without crashing.
 

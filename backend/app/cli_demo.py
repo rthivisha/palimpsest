@@ -2,12 +2,13 @@
 
 Demonstrates the neurosymbolic CEGIS loop running against the deterministic fake model backend:
 1. Input: (x ^ y) + 2 * (x & y)
-2. Attempt 1: Model proposes 'x ^ y' -> Z3 returns SAT with witness {'x': 1, 'y': 1} (expected 2, actual 0).
+2. Attempt 1: Model proposes 'x ^ y' -> Z3 returns SAT with small witness {'x': 15, 'y': 15} (expected 30, actual 0).
 3. Attempt 2: Model receives witness feedback -> proposes 'x + y' -> Z3 returns UNSAT.
-4. Equivalence Proven (QF_BV_UNSAT_64BIT_VERIFIED) -> Compression reported.
+4. Equivalence Proven by Z3 (QF_BV, 64-bit) -> Compression reported.
 """
 import os
 import sys
+
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -45,7 +46,7 @@ def run_cli_demo(expression: str = "(x ^ y) + 2 * (x & y)", max_iterations: int 
 
             if node_name == "parse_ast":
                 print(f"    AST Parsed Successfully.")
-                print(f"    Initial AST Nodes: {state_update.get('obf_nodes')}")
+                print(f"    Initial Semantic AST Nodes (BinOp/UnaryOp/Name/Constant): {state_update.get('obf_nodes')}")
 
             elif node_name == "propose":
                 iter_num = state_update.get("iteration")
@@ -67,13 +68,13 @@ def run_cli_demo(expression: str = "(x ^ y) + 2 * (x & y)", max_iterations: int 
                     expected = verif.get("expected")
                     actual = verif.get("actual")
                     diff_bits = verif.get("diff_bits")
-                    print(f"    Counterexample Witness Discovered: {witness}")
+                    print(f"    Counterexample Witness Discovered (Bounded Bv < 16): {witness}")
                     print(f"    Evaluation: Expected {expected}, Actual {actual}")
                     print(f"    Bit Discrepancy (64-bit diff): {diff_bits}")
                     print(f"    --> Recycling witness back into model context for retry...")
 
                 elif status == "QF_BV_UNSAT_64BIT_VERIFIED":
-                    print(f"    [PROVEN] No 64-bit counterexample exists!")
+                    print(f"    [PROVEN] equivalence proven by Z3 (QF_BV, 64-bit)")
 
             elif node_name == "finalize_success":
                 status = state_update.get("final_status")
@@ -84,7 +85,7 @@ def run_cli_demo(expression: str = "(x ^ y) + 2 * (x & y)", max_iterations: int 
                 print(f" [+] RESULT: {status}")
                 print(f" [+] Proven Canonical Form: {final_expr}")
                 print(f" [+] AST Nodes: Final {final_nodes} (Reduced by {compression}%)")
-                print(f" [+] Equivalence formally verified by Z3 (QF_BV, 64-bit)")
+                print(f" [+] Equivalence proven by Z3 (QF_BV, 64-bit)")
                 print("=" * 70 + "\n")
 
             elif node_name == "finalize_fail":

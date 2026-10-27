@@ -1,13 +1,25 @@
 """AST utilities for PALIMPSEST expressions.
 
-Provides helper routines to:
-- Count AST nodes (used to compute expression compression percentage: 1 - final_nodes / obf_nodes)
-- Extract all variable identifiers present in an expression (e.g. ['x', 'y'] or ['rax', 'rbx'])
-- Calculate tree depth to prevent deep recursion
-- Normalize and unparse AST trees into canonical mathematical strings
+Node Counting Specification:
+In PALIMPSEST, expression complexity and the de-obfuscation compression ratio
+are defined strictly by counting the following four semantic AST node types:
+1. `ast.BinOp`: Binary operators (+, -, *, &, |, ^, <<, >>)
+2. `ast.UnaryOp`: Unary operators (~, -)
+3. `ast.Name`: Variable identifiers (x, y, rax, rbx, etc.)
+4. `ast.Constant`: Integer literals (1, 2, 0x100, etc.)
+
+Non-semantic structural nodes (such as `ast.Expression` wrappers and `ast.Load` context)
+are deliberately excluded from the count. Under this definition:
+- Canonical 'x + y' has 3 nodes (1 BinOp + 2 Names).
+- Obfuscated '(x ^ y) + 2 * (x & y)' has 9 nodes (4 BinOps + 1 Constant + 4 Names).
+- The AST compression ratio is: round((1.0 - (final_nodes / obf_nodes)) * 100, 2).
 """
 import ast
 from typing import List, Set, Union
+
+
+# Strict tuple of AST node types that contribute to node count
+COUNTED_NODE_TYPES = (ast.BinOp, ast.UnaryOp, ast.Name, ast.Constant)
 
 
 def get_ast_node(expr_or_node: Union[str, ast.AST]) -> ast.AST:
@@ -24,25 +36,26 @@ def get_ast_node(expr_or_node: Union[str, ast.AST]) -> ast.AST:
 
 
 def count_nodes(expr_or_node: Union[str, ast.AST]) -> int:
-    """Counts the total number of AST nodes in an expression.
+    """Counts AST nodes representing actual semantic operations and operands.
 
-    Why this matters:
-    In PALIMPSEST, our metric for de-obfuscation effectiveness is the AST
-    compression ratio:
-        compression_pct = (1.0 - (target_nodes / obf_nodes)) * 100
-    By counting the nodes in the AST, we get an objective, format-independent
-    measure of expression size (unlike character count, which depends on whitespace).
+    Strictly counts only:
+    - ast.BinOp (binary operations: +, -, *, &, |, ^, <<, >>)
+    - ast.UnaryOp (unary operations: ~, -)
+    - ast.Name (variable identifiers: x, y, rax, etc.)
+    - ast.Constant (integer literal values: 1, 2, 0x100, etc.)
+
+    Structural wrapper nodes (ast.Expression) and context nodes (ast.Load) are excluded,
+    ensuring that canonical expressions match training metrics (e.g. 'x + y' has 3 nodes:
+    1 BinOp + 2 Names; '(x ^ y) + 2 * (x & y)' has 9 nodes).
 
     Args:
         expr_or_node: Either a mathematical expression string or a parsed ast.AST.
 
     Returns:
-        The integer count of AST nodes.
+        The integer count of semantic AST nodes.
     """
     tree = get_ast_node(expr_or_node)
-    # ast.walk recursively yields all nodes in the tree in no specified order.
-    # We count every visited AST node.
-    return sum(1 for _ in ast.walk(tree))
+    return sum(1 for node in ast.walk(tree) if isinstance(node, COUNTED_NODE_TYPES))
 
 
 def extract_variables(expr_or_node: Union[str, ast.AST]) -> List[str]:
@@ -96,7 +109,6 @@ def format_expr(expr_or_node: Union[str, ast.AST]) -> str:
     and redundant wrapping.
     """
     tree = get_ast_node(expr_or_node)
-    # If the root is ast.Expression, unparse its body directly
     if isinstance(tree, ast.Expression):
         return ast.unparse(tree.body)
     return ast.unparse(tree)

@@ -144,19 +144,18 @@ class TestAstUtils:
     """Verifies AST analysis, node counting, and variable extraction."""
 
     def test_count_nodes_accurate(self):
-        """Counts nodes for simple and composite expressions."""
-        # "x" -> Expression -> Name -> Load (3 nodes in ast.walk)
-        cnt_x = count_nodes("x")
-        assert cnt_x > 0
+        """Counts strictly BinOp, UnaryOp, Name, and Constant nodes."""
+        # "x" -> Name (1 node)
+        assert count_nodes("x") == 1
 
-        # "x + y" must have more nodes than "x"
-        cnt_add = count_nodes("x + y")
-        assert cnt_add > cnt_x
+        # "x + y" -> BinOp(+), Name(x), Name(y) (3 nodes)
+        assert count_nodes("x + y") == 3
 
-        # Obfuscated identity must have strictly more nodes than canonical target
-        canonical = "x + y"
-        obfuscated = "(x ^ y) + 2 * (x & y)"
-        assert count_nodes(obfuscated) > count_nodes(canonical)
+        # "(x ^ y) + 2 * (x & y)" -> 4 BinOps (+, ^, *, &), 1 Constant (2), 4 Names (x, y, x, y) = 9 nodes
+        assert count_nodes("(x ^ y) + 2 * (x & y)") == 9
+
+        # Unary ~x -> UnaryOp(~), Name(x) = 2 nodes
+        assert count_nodes("~x") == 2
 
     def test_extract_variables(self):
         """Discovers all variable identifiers without duplicates."""
@@ -239,9 +238,20 @@ class TestZ3Verifier:
         actual_calc = (wx ^ wy) & 0xFFFFFFFFFFFFFFFF
         assert res["expected"] == expected_calc
         assert res["actual"] == actual_calc
+        # The witness values must be bounded and small
+        assert wx < 16 and wy < 16
+
+    def test_demo_witness_is_small(self):
+        """Asserts that the demo expression witness values are small (ULT(v, 16))."""
+        res = verify_equivalence("(x ^ y) + 2 * (x & y)", "x ^ y")
+        assert res["status"] == STATUS_SAT
+        assert "x" in res["witness"] and "y" in res["witness"]
+        # Both variable values in the witness must be strictly < 16
+        for var_name, val in res["witness"].items():
+            assert 0 <= val < 16, f"Expected small witness for {var_name}, got {val}"
 
     def test_64bit_overflow_wrapping(self):
-        """Verifies that addition modulo 2^64 wraps cleanly to 0 without overflow error."""
+        """Verifies that 64-bit addition wraps cleanly to 0 without overflow error."""
         # 0xFFFFFFFFFFFFFFFF + 1 == 0 in 64-bit unsigned arithmetic
         res = verify_equivalence("x + 0xFFFFFFFFFFFFFFFF + 1", "x")
         assert res["status"] == STATUS_VERIFIED

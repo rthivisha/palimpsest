@@ -76,3 +76,4 @@ def build_graph(backend: Optional[BaseLLMBackend] = None) -> CompiledStateGraph:
 
     # 8. Compile state machine
     return workflow.compile()
+

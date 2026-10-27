@@ -164,13 +164,18 @@ class TestLangGraphLoop:
         # Must succeed with formal proof
         assert result["final_status"] == "VERIFIED_EQUIVALENT"
         assert result["final_expr"] == "x + y"
-        assert result["compression_pct"] > 0.0
+        assert result["obf_nodes"] == 9
+        assert result["final_nodes"] == 3
+        assert result["compression_pct"] == 66.67
 
         # Exactly 2 attempts: Attempt 1 was SAT, Attempt 2 was UNSAT
         history = result["history"]
         assert len(history) == 2
         assert history[0]["candidate"] == "x ^ y"
         assert history[0]["status"] == "SAT"
+        # Assert demo witness is small (bounded by ULT(v, 16))
+        assert history[0]["witness"] is not None
+        assert all(0 <= val < 16 for val in history[0]["witness"].values())
         assert history[1]["candidate"] == "x + y"
         assert history[1]["status"] == "QF_BV_UNSAT_64BIT_VERIFIED"
 
@@ -233,3 +238,4 @@ class TestLangGraphLoop:
         assert result["final_status"] == "REJECTED_UNSAFE"
         assert len(result["history"]) == 0
         assert "Security Gate Rejection" in result["error_message"]
+
