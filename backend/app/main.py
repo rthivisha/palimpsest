@@ -8,6 +8,7 @@ Architecture:
 - Lifespan management:
   Starts the telemetry background writer thread on startup, cleanly drains and stops on shutdown.
 """
+import os
 from contextlib import asynccontextmanager
 from typing import Set
 
@@ -21,15 +22,24 @@ from backend.app.api.routes_run import router as run_router
 from backend.app.config import settings
 from backend.app.telemetry.db import telemetry_db
 
-# Allowed hostname whitelist (port is stripped prior to matching)
-ALLOWED_HOSTNAMES: Set[str] = {"localhost", "127.0.0.1", "testserver"}
+
+def get_allowed_hostnames() -> Set[str]:
+    """Returns the set of allowed Host header hostnames.
+
+    In normal runtime, only 'localhost' and '127.0.0.1' are permitted.
+    'testserver' is permitted only when executing under test suites (PYTEST_CURRENT_TEST).
+    """
+    allowed = {"localhost", "127.0.0.1"}
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        allowed.add("testserver")
+    return allowed
 
 
 class HostHeaderValidationMiddleware(BaseHTTPMiddleware):
     """Protects against DNS rebinding and malicious Host header spoofing.
 
-    Allows requests only when the Host header resolves to localhost, 127.0.0.1,
-    or testserver (used by Starlette / pytest TestClient).
+    Allows requests only when the Host header resolves to localhost or 127.0.0.1
+    (and 'testserver' strictly during automated test execution).
     Works seamlessly with the Vite dev proxy.
     """
 
@@ -37,7 +47,7 @@ class HostHeaderValidationMiddleware(BaseHTTPMiddleware):
         host_header = request.headers.get("host")
         if host_header:
             hostname = host_header.split(":")[0].strip().lower()
-            if hostname not in ALLOWED_HOSTNAMES:
+            if hostname not in get_allowed_hostnames():
                 return Response(
                     content=f"Bad Request: Disallowed Host '{host_header}'",
                     status_code=400,
@@ -87,3 +97,4 @@ app.add_middleware(
 app.include_router(run_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
 app.include_router(meta_router, prefix="/api")
+

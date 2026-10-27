@@ -37,9 +37,13 @@ htmlcov/
 # Database and Telemetry
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 *.db
 *.db-wal
 *.db-shm
+*-wal
+*-shm
 
 # Models & Large Weights (never commit GGUF files)
 models/*.gguf

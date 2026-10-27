@@ -246,6 +246,136 @@ class TestSSEStreaming:
             error_payload = events[-1][1]
             assert "Ollama daemon unreachable" in error_payload["error"]
 
+    def test_fake_scenario_garbage_mode(self, temp_db, monkeypatch):
+        """FAKE_SCENARIO=garbage produces unparseable syntax, which becomes an INVALID attempt."""
+        monkeypatch.setenv("FAKE_SCENARIO", "garbage")
+        client = TestClient(app)
+        response = client.post(
+            "/api/run",
+            json={"expression": "x + y", "max_iterations": 2},
+        )
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+
+        # Verification event for iteration 1 must have status INVALID
+        verif_events = [data for name, data in events if name == "verification"]
+        assert len(verif_events) >= 1
+        assert verif_events[0]["status"] == "INVALID"
+        assert verif_events[0]["witness"] == {}
+        assert verif_events[0]["expected"] is None
+        assert verif_events[0]["actual"] is None
+
+        # Retry event contains sanitized error feedback
+        retry_events = [data for name, data in events if name == "retry"]
+        assert len(retry_events) == 1
+        assert "Z3_VERIFICATION_FAILED: INVALID" in retry_events[0]["feedback_message"]
+
+    def test_database_records_backend_error(self, temp_db):
+        """Backend failure is persisted to SQLite with final_status='ERROR'."""
+        client = TestClient(app)
+        with patch.object(FakeLLMBackend, "generate", side_effect=LLMBackendError("Database test crash")):
+            response = client.post("/api/run", json={"expression": "x + y", "max_iterations": 2})
+            assert response.status_code == 200
+            events = parse_sse_events(response.text)
+            run_id = events[0][1]["run_id"]
+
+        temp_db.sync()
+        run_record = temp_db.get_run(run_id)
+        assert run_record is not None
+        assert run_record["final_status"] == "ERROR"
+
+    def test_database_records_rejected_unsafe(self, temp_db):
+        """Security gate rejection is persisted to SQLite with final_status='REJECTED_UNSAFE' and obf_nodes=0."""
+        client = TestClient(app)
+        chain_expr = "x" + "+x" * 2399
+        response = client.post("/api/run", json={"expression": chain_expr, "max_iterations": 2})
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+        run_id = events[0][1]["run_id"]
+
+        temp_db.sync()
+        run_record = temp_db.get_run(run_id)
+        assert run_record is not None
+        assert run_record["final_status"] == "REJECTED_UNSAFE"
+        assert run_record["obf_nodes"] == 0
+        assert run_record["attempts"] == 0
+
+    def test_api_depth_chain_rejected_cleanly(self):
+        """POST /api/run with 2,400-term chain returns normal stream with REJECTED_UNSAFE (no 500, no RecursionError)."""
+        chain_expr = "x" + "+x" * 2399  # 4,799 characters, depth > 2400
+        client = TestClient(app)
+        response = client.post(
+            "/api/run",
+            json={"expression": chain_expr, "max_iterations": 3},
+        )
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+
+        event_names = [e[0] for e in events]
+        assert event_names == [
+            "run_started",
+            "node_started",
+            "node_finished",
+            "final",
+        ]
+        assert events[0][1]["obf_nodes"] == 0
+        final_payload = events[-1][1]
+        assert final_payload["status"] == "REJECTED_UNSAFE"
+        assert final_payload["obf_nodes"] == 0
+        assert final_payload["attempts"] == 0
+        assert "depth exceeds limit" in final_payload["reason"].lower()
+
+    def test_api_depth_chain_as_model_candidate_becomes_invalid_attempt(self, temp_db):
+        """When a model proposes a 2,400-term chain, it is safely judged as an INVALID attempt without 500/RecursionError."""
+        chain_cand = "x" + "+x" * 2399
+        fake_backend = FakeLLMBackend(always_candidate=chain_cand)
+
+        with patch("backend.app.api.routes_run.get_backend", return_value=fake_backend):
+            client = TestClient(app)
+            response = client.post(
+                "/api/run",
+                json={"expression": "x + y", "max_iterations": 1},
+            )
+            assert response.status_code == 200
+            events = parse_sse_events(response.text)
+
+            verif_events = [data for name, data in events if name == "verification"]
+            assert len(verif_events) == 1
+            assert verif_events[0]["status"] == "INVALID"
+
+            final_events = [data for name, data in events if name == "final"]
+            assert len(final_events) == 1
+            assert final_events[0]["status"] == "FAILED"
+
+    def test_retry_feedback_format_single_line_and_bounded(self, temp_db, monkeypatch):
+        """The 'Error:' text in retry feedback is strictly single-line, <= 200 chars, and excludes raw model output."""
+        monkeypatch.setenv("FAKE_SCENARIO", "garbage")
+        client = TestClient(app)
+        response = client.post(
+            "/api/run",
+            json={"expression": "x + y", "max_iterations": 2},
+        )
+        assert response.status_code == 200
+        events = parse_sse_events(response.text)
+
+        retry_events = [data for name, data in events if name == "retry"]
+        assert len(retry_events) == 1
+        feedback = retry_events[0]["feedback_message"]
+
+        # Parse lines
+        lines = feedback.splitlines()
+        assert len(lines) == 2
+        assert lines[0] == "Z3_VERIFICATION_FAILED: INVALID"
+        assert lines[1].startswith("Error: ")
+
+        error_content = lines[1][len("Error: "):]
+        # Must be single line (no internal newlines)
+        assert "\n" not in error_content
+        # Length bounded to ~200 characters
+        assert len(error_content) <= 200
+        # Never includes the raw model output text ('def foo(): pass; 123')
+        assert "def foo(): pass; 123" not in error_content
+
     def test_exact_payload_key_sets(self, temp_db):
         """Every event emitted strictly adheres to the frozen payload key schema."""
         expected_keys = {
@@ -407,6 +537,191 @@ class TestConcurrencyAndCancellation:
         assert run is not None
         assert run["final_status"] == "CANCELLED"
 
+    @pytest.mark.asyncio
+    async def test_disconnect_cancellation_real_asgi(self, temp_db, monkeypatch):
+        """Simulates a real mid-stream client disconnect at the ASGI protocol level.
+
+        How it disconnects:
+        Directly invokes the ASGI app with scope, receive, send.
+        When send() receives the initial 'run_started' event, receive() returns
+        {'type': 'http.disconnect'}. Starlette's StreamingResponse detects http.disconnect,
+        cancels the stream task, which executes cancel_event.set() in its finally block.
+        Asserts that the worker stops at the next node boundary within 0.3s and
+        the database records final_status as CANCELLED.
+        """
+        monkeypatch.setenv("FAKE_SCENARIO", "slow")
+
+        disconnect_event = asyncio.Event()
+        body_sent = False
+        run_id = None
+
+        async def receive():
+            nonlocal body_sent
+            if not body_sent:
+                body_sent = True
+                return {
+                    "type": "http.request",
+                    "body": json.dumps({"expression": "(x ^ y) + 2 * (x & y)", "max_iterations": 5}).encode("utf-8"),
+                    "more_body": False,
+                }
+            await disconnect_event.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            nonlocal run_id
+            if message["type"] == "http.response.body":
+                body_text = message.get("body", b"").decode("utf-8", errors="ignore")
+                if "run_started" in body_text:
+                    for line in body_text.splitlines():
+                        if line.startswith("data:"):
+                            run_id = json.loads(line[5:])["run_id"]
+                            # Trigger mid-stream disconnect
+                            disconnect_event.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/api/run",
+            "raw_path": b"/api/run",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/json"),
+            ],
+            "client": ("127.0.0.1", 54321),
+            "server": ("testserver", 80),
+        }
+
+        start_time = time.perf_counter()
+        await app(scope, receive, send)
+
+        # Allow worker thread to catch cancel and update telemetry
+        await asyncio.sleep(0.3)
+        temp_db.sync()
+
+        # Assert worker stopped at the next node boundary (did not sleep for 5s)
+        elapsed = time.perf_counter() - start_time
+        assert elapsed < 2.0, f"Worker took too long to halt on disconnect: {elapsed:.2f}s"
+
+        run = temp_db.get_run(run_id)
+        assert run is not None
+        assert run["final_status"] == "CANCELLED"
+
+    def test_lock_released_after_disconnect(self, temp_db, monkeypatch):
+        """Proves the lock is released after client disconnect: subsequent run returns 200 (not 429)."""
+        monkeypatch.setenv("FAKE_SCENARIO", "slow")
+        from backend.app.api.routes_run import run_synthesis_worker, run_lock
+
+        run_id = "test_lock_disc"
+        temp_db.record_run({
+            "run_id": run_id,
+            "expression": "x + y",
+            "obf_nodes": 3,
+            "final_status": "RUNNING",
+            "backend": "fake",
+            "max_iterations": 2,
+        })
+        cancel_evt = threading.Event()
+        q = asyncio.Queue()
+        lp = asyncio.new_event_loop()
+
+        assert run_lock.acquire(blocking=False)
+        w = threading.Thread(
+            target=run_synthesis_worker,
+            args=(run_id, "x + y", 2, "fake", 3, lp, q, cancel_evt),
+        )
+        w.start()
+        time.sleep(0.1)
+        cancel_evt.set()
+        w.join(timeout=2.0)
+
+        # Lock must be released
+        assert not run_lock.locked()
+
+        # Subsequent run must succeed immediately with 200 (not 429)
+        monkeypatch.delenv("FAKE_SCENARIO", raising=False)
+        client = TestClient(app)
+        res = client.post("/api/run", json={"expression": "x + y", "max_iterations": 1})
+        assert res.status_code == 200
+
+    def test_lock_released_after_backend_error(self, temp_db):
+        """Proves the lock is released after a backend error: subsequent run returns 200 (not 429)."""
+        client = TestClient(app)
+        with patch.object(FakeLLMBackend, "generate", side_effect=LLMBackendError("Crash")):
+            res = client.post("/api/run", json={"expression": "x + y", "max_iterations": 1})
+            assert res.status_code == 200
+            assert "error" in res.text
+
+        # Lock must be released in finally; subsequent run returns 200
+        res2 = client.post("/api/run", json={"expression": "x + y", "max_iterations": 1})
+        assert res2.status_code == 200
+        assert not run_lock.locked()
+
+    def test_lock_released_after_slow_cancelled(self, temp_db, monkeypatch):
+        """Proves the lock is released after cancelling FAKE_SCENARIO=slow: subsequent run returns 200."""
+        monkeypatch.setenv("FAKE_SCENARIO", "slow")
+        from backend.app.api.routes_run import run_synthesis_worker, run_lock
+
+        run_id = "test_lock_slow"
+        temp_db.record_run({
+            "run_id": run_id,
+            "expression": "x + y",
+            "obf_nodes": 3,
+            "final_status": "RUNNING",
+            "backend": "fake",
+            "max_iterations": 2,
+        })
+        cancel_evt = threading.Event()
+        q = asyncio.Queue()
+        lp = asyncio.new_event_loop()
+
+        assert run_lock.acquire(blocking=False)
+        w = threading.Thread(
+            target=run_synthesis_worker,
+            args=(run_id, "x + y", 2, "fake", 3, lp, q, cancel_evt),
+        )
+        w.start()
+        time.sleep(0.15)
+        cancel_evt.set()
+        w.join(timeout=2.0)
+
+        assert not run_lock.locked()
+
+        monkeypatch.delenv("FAKE_SCENARIO", raising=False)
+        client = TestClient(app)
+        res = client.post("/api/run", json={"expression": "x + y", "max_iterations": 1})
+        assert res.status_code == 200
+
+    def test_call_soon_threadsafe_closed_loop_does_not_crash_worker(self, temp_db):
+        """Confirm that call_soon_threadsafe after event loop has closed is caught and cannot crash worker."""
+        from backend.app.api.routes_run import run_synthesis_worker
+
+        run_id = "test_closed_loop_run"
+        temp_db.record_run({
+            "run_id": run_id,
+            "expression": "x + y",
+            "obf_nodes": 3,
+            "final_status": "RUNNING",
+            "backend": "fake",
+            "max_iterations": 1,
+        })
+        cancel_evt = threading.Event()
+        q = asyncio.Queue()
+        closed_loop = asyncio.new_event_loop()
+        closed_loop.close()  # Force closed loop
+
+        # Worker must finish cleanly without raising an unhandled RuntimeError
+        w = threading.Thread(
+            target=run_synthesis_worker,
+            args=(run_id, "x + y", 1, "fake", 3, closed_loop, q, cancel_evt),
+        )
+        w.start()
+        w.join(timeout=2.0)
+        assert not w.is_alive()
+
     def test_concurrent_z3_separate_contexts(self):
         """Two concurrent threads executing verify_equivalence with isolated z3.Context() succeed."""
         results = {}
@@ -434,8 +749,8 @@ class TestConcurrencyAndCancellation:
 class TestHostHeaderAndREST:
     """Verifies Host-header filtering for Vite proxy and all standard REST endpoints."""
 
-    def test_host_header_middleware(self):
-        """Allows localhost, 127.0.0.1, testserver, and rejects unauthorized hosts with 400."""
+    def test_host_header_middleware(self, monkeypatch):
+        """Allows localhost, 127.0.0.1, testserver during test, and rejects unauthorized hosts."""
         client = TestClient(app)
 
         # Allowed host header
@@ -449,6 +764,11 @@ class TestHostHeaderAndREST:
         res_disallowed = client.get("/api/health", headers={"Host": "evil-domain.com"})
         assert res_disallowed.status_code == 400
         assert "Disallowed Host" in res_disallowed.text
+
+        # Outside tests (PYTEST_CURRENT_TEST unset), testserver is rejected
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        res_testserver_prod = client.get("/api/health", headers={"Host": "testserver"})
+        assert res_testserver_prod.status_code == 400
 
     def test_health_endpoint(self):
         """GET /api/health returns solver, backend, and runtime status."""

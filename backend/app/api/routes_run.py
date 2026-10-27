@@ -72,7 +72,11 @@ def run_synthesis_worker(
     start_time = time.perf_counter()
 
     def dispatch(event_type: Optional[str], payload: Optional[Dict[str, Any]] = None) -> None:
-        loop.call_soon_threadsafe(event_queue.put_nowait, (event_type, payload))
+        try:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(event_queue.put_nowait, (event_type, payload))
+        except (RuntimeError, Exception) as exc:
+            logger.debug("Dispatch suppressed (event loop closed or unreachable): %s", exc)
 
     def should_cancel() -> bool:
         return cancel_event.is_set()

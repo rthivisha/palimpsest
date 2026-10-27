@@ -3,13 +3,15 @@ import json
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
+from backend.app.config import settings
+
 
 class RunRequest(BaseModel):
     """Payload for POST /api/run initiating a de-obfuscation synthesis run."""
     expression: str = Field(
         ...,
         description="Scrambled 64-bit MBA expression to de-obfuscate.",
-        max_length=5000,
+        max_length=settings.MAX_EXPR_CHARS,
     )
     max_iterations: int = Field(
         default=5,
@@ -58,3 +60,4 @@ def format_sse_event(event_type: str, data: Dict[str, Any]) -> str:
     """
     json_str = json.dumps(data)
     return f"event: {event_type}\ndata: {json_str}\n\n"
+

@@ -15,15 +15,12 @@ any expression is allowed to reach the Z3 SMT solver. Only purely algebraic,
 import ast
 from typing import Optional, Set, Tuple, Type
 
+from backend.app.config import settings
 
-# Maximum allowed characters for an input expression string.
-# Prevents memory exhaustion attacks from oversized payload strings.
-MAX_EXPRESSION_LENGTH: int = 5000
-
-# Maximum allowed AST tree depth.
-# Deeply nested trees (like `((((...(x)...))))`) can cause recursion limit
-# crashes in Python and stack exhaustion inside Z3.
-MAX_AST_DEPTH: int = 100
+# Configurable limits for AST complexity and character length
+MAX_EXPR_CHARS: int = settings.MAX_EXPR_CHARS
+MAX_EXPRESSION_LENGTH: int = MAX_EXPR_CHARS
+MAX_AST_DEPTH: int = settings.MAX_AST_DEPTH
 
 
 class SafetyViolationError(ValueError):
@@ -79,11 +76,17 @@ def compute_tree_depth(node: ast.AST) -> int:
     return max_depth
 
 
-def validate_ast(expr_str: str) -> ast.Expression:
+def validate_ast(
+    expr_str: str,
+    max_chars: Optional[int] = None,
+    max_depth: Optional[int] = None,
+) -> ast.Expression:
     """Parses and validates an expression string against the strict AST whitelist.
 
     Args:
         expr_str: The raw expression string to validate.
+        max_chars: Maximum character limit override (defaults to settings.MAX_EXPR_CHARS).
+        max_depth: Maximum AST depth override (defaults to settings.MAX_AST_DEPTH).
 
     Returns:
         The validated ast.Expression node if safe.
@@ -99,10 +102,13 @@ def validate_ast(expr_str: str) -> ast.Expression:
     if not stripped:
         raise SafetyViolationError("Expression cannot be empty.")
 
+    char_limit = max_chars if max_chars is not None else settings.MAX_EXPR_CHARS
+    depth_limit = max_depth if max_depth is not None else settings.MAX_AST_DEPTH
+
     # 1. Enforce length boundary
-    if len(stripped) > MAX_EXPRESSION_LENGTH:
+    if len(stripped) > char_limit:
         raise SafetyViolationError(
-            f"Expression exceeds maximum character limit ({len(stripped)} > {MAX_EXPRESSION_LENGTH})."
+            f"Expression exceeds maximum character limit ({len(stripped)} > {char_limit})."
         )
 
     # 2. Parse the expression using Python's AST in 'eval' mode.
@@ -114,9 +120,9 @@ def validate_ast(expr_str: str) -> ast.Expression:
 
     # 3. Enforce maximum recursion depth
     depth = compute_tree_depth(tree)
-    if depth > MAX_AST_DEPTH:
+    if depth > depth_limit:
         raise SafetyViolationError(
-            f"AST depth exceeds limit ({depth} > {MAX_AST_DEPTH}). Possible nested recursion attack."
+            f"AST depth exceeds limit ({depth} > {depth_limit}). Possible nested recursion attack."
         )
 
     # 4. Walk the entire AST and enforce the whitelist
@@ -168,7 +174,11 @@ def validate_ast(expr_str: str) -> ast.Expression:
     return tree
 
 
-def is_safe_ast(expr_str: str) -> Tuple[bool, Optional[str]]:
+def is_safe_ast(
+    expr_str: str,
+    max_chars: Optional[int] = None,
+    max_depth: Optional[int] = None,
+) -> Tuple[bool, Optional[str]]:
     """Safe wrapper around validate_ast returning a boolean and error description.
 
     Useful when you want to check an expression without catching exceptions.
@@ -178,7 +188,7 @@ def is_safe_ast(expr_str: str) -> Tuple[bool, Optional[str]]:
         (False, error_message) if the expression is rejected.
     """
     try:
-        validate_ast(expr_str)
+        validate_ast(expr_str, max_chars=max_chars, max_depth=max_depth)
         return True, None
     except SafetyViolationError as err:
         return False, str(err)

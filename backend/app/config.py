@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     SHIFT_SEMANTICS: str = "z3"  # "z3" (default: shift >= 64 is 0) or "x86_mask" (shift & 63)
     MODEL_TIMEOUT_SECONDS: int = 10
 
+    # AST Complexity and Safety Limits
+    MAX_AST_DEPTH: int = 100
+    MAX_EXPR_CHARS: int = 5000
+
     # [CONFIRM] Items & Tunables
     # Role used for the Z3 feedback turn: "user" (default) or "tool"
     TOOL_ROLE: str = "user"
