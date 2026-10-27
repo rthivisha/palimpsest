@@ -26,6 +26,7 @@ from backend.app.llm.prompts import (
     extract_think,
     format_initial_prompt,
     format_z3_feedback,
+    render_chatml_prompt,
 )
 
 
@@ -174,6 +175,84 @@ class TestPromptFormatTrainingExact:
             "Counterexample Witness: {'x': 1, 'y': 1}\n"
             "Expected: 2, Actual: 0"
         )
+
+    def test_golden_string_rendered_2turn_chatml_both_backends(self):
+        """Golden-string test verifying 2-turn rendered ChatML for Ollama and llama-cpp backends.
+
+        Ensures character-for-character compliance with fine-tuning contract:
+        - Starts strictly with `<|im_start|>user\\n` on index 0 (no leading whitespace or newline).
+        - Exactly one newline after each `<|im_end|>`.
+        - Ends with `<|im_start|>assistant\\n` priming generation.
+        """
+        history_t2 = [
+            {
+                "iteration": 1,
+                "candidate": "(x + y) - 1",
+                "raw_output": "<think>\nAnalyzing MBA expression...\n</think>\n(x + y) - 1",
+                "status": "SAT",
+                "witness": {"x": 1, "y": 1},
+                "expected": 2,
+                "actual": 0,
+            }
+        ]
+        messages = build_messages(
+            obfuscated_expr="(x ^ y) + 2 * (x & y)",
+            history=history_t2,
+            tool_role="user",
+            system_prompt="",
+            history_mode="last",
+        )
+
+        golden_2turn_chatml = (
+            "<|im_start|>user\n"
+            "De-obfuscate this 64-bit MBA expression:\n"
+            "(x ^ y) + 2 * (x & y)<|im_end|>\n"
+            "<|im_start|>assistant\n"
+            "<think>\n"
+            "Analyzing MBA expression...\n"
+            "</think>\n"
+            "(x + y) - 1<|im_end|>\n"
+            "<|im_start|>user\n"
+            "Z3_VERIFICATION_FAILED: SAT\n"
+            "Counterexample Witness: {'x': 1, 'y': 1}\n"
+            "Expected: 2, Actual: 0<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+
+        rendered = render_chatml_prompt(messages)
+
+        # 1. Exact character-for-character equality
+        assert rendered == golden_2turn_chatml
+
+        # 2. Assert no leading newline or leading whitespace
+        assert rendered.startswith("<|im_start|>user\n")
+        assert not rendered.startswith("\n")
+        assert not rendered.startswith(" ")
+
+        # 3. Assert exactly one newline after each <|im_end|>
+        assert "<|im_end|>\n<|im_start|>" in rendered
+        assert "<|im_end|>\n\n<|im_start|>" not in rendered
+        assert "<|im_end|><|im_start|>" not in rendered
+
+        # 4. Assert ends with assistant priming token
+        assert rendered.endswith("<|im_start|>assistant\n")
+
+    def test_configurable_repeated_candidate_temperature_bump(self):
+        """Verifies configurable temperature bump on repeated candidate generation."""
+        from backend.app.graph.nodes import make_propose_node
+
+        mock_backend = MagicMock(spec=BaseLLMBackend)
+        mock_backend.generate.return_value = "x + y"
+
+        # Custom bump of 0.25
+        node = make_propose_node(mock_backend, temp_retry_increment=0.25)
+        state = {
+            "obfuscated_expr": "x + y",
+            "history": [{"iteration": 1, "candidate": "x + y"}],
+            "temperature": 0.2,
+        }
+        res = node(state)
+        assert res["temperature"] == 0.45  # 0.2 + 0.25
 
     def test_candidate_extraction_with_and_without_think(self):
         """Extracts simplified candidate following </think> accurately."""

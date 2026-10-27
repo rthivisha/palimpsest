@@ -199,7 +199,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/90 border border-cyan-500/30 text-xs font-mono">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400 shrink-0" />
                 <span className="text-cyan-300 font-medium">
-                  {isModelLoading ? 'Loading model...' : activeNode === 'verify' ? 'Z3 Verifying...' : 'Processing...'}
+                  {isModelLoading ? 'Model generating...' : activeNode === 'verify' ? 'Z3 Verifying...' : 'Processing...'}
                 </span>
                 <span className="text-slate-400 border-l border-slate-700 pl-2 font-mono">
                   {elapsedSeconds.toFixed(1)}s

@@ -32,12 +32,17 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-bold font-mono text-slate-100 flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-1">
           <BookOpen className="w-5 h-5 text-cyan-400" />
-          <span>DATASET EXPLORER & MBA REASONING BENCHMARK</span>
-        </h2>
+          <h2 className="text-lg font-bold font-mono text-slate-100">
+            DATASET EXPLORER (ILLUSTRATIVE PRESETS)
+          </h2>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-500/40 font-semibold uppercase">
+            Illustrative Only
+          </span>
+        </div>
         <p className="text-xs text-slate-400 mt-0.5">
-          Curated Mixed Boolean-Arithmetic benchmarks demonstrating algebraic identities, bit-vector semantics, and opaque terms.
+          Educational illustrative examples demonstrating algebraic MBA simplification. Formal benchmark evaluation dataset (samples.jsonl) is separate and will be loaded upon delivery.
         </p>
       </div>
 
@@ -58,9 +63,14 @@ export const DatasetExplorer: React.FC<DatasetExplorerProps> = ({
                     <Sparkles className="w-4 h-4 text-cyan-400" />
                     <span>{item.title || item.name}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400">
-                    <span>Vars:</span>
-                    <span className="text-cyan-300 font-semibold">{item.variables ? item.variables.join(', ') : 'none'}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-amber-950/50 text-amber-400 border border-amber-600/30 font-medium">
+                      Illustrative
+                    </span>
+                    <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-400">
+                      <span>Vars:</span>
+                      <span className="text-cyan-300 font-semibold">{item.variables ? item.variables.join(', ') : 'none'}</span>
+                    </div>
                   </div>
                 </div>
 

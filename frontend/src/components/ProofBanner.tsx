@@ -127,7 +127,9 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
               ? finalResult.reason || 'Expression violated AST whitelist or depth limits. Execution aborted safely.'
               : isCancelled
               ? 'Synthesis run was interrupted by client disconnect.'
-              : 'The neural model was unable to propose an equivalent expression within the iteration budget. Guess discarded.'}
+              : (finalResult.reason
+                  ? `${finalResult.reason}. Candidate discarded.`
+                  : 'Proposer was unable to propose an equivalent expression within the iteration budget. Candidate discarded.')}
           </p>
         </div>
       </div>

@@ -27,8 +27,8 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className="border-b border-cyber-border bg-cyber-surface/90 backdrop-blur sticky top-0 z-50 px-4 lg:px-8 py-3">
-      <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+    <header className="w-full border-b border-cyber-border bg-cyber-surface/90 backdrop-blur sticky top-0 z-50 px-4 sm:px-6 lg:px-8 py-2.5">
+      <div className="w-full max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 overflow-visible">
         {/* Logo and Codename */}
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-lg bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.3)]">

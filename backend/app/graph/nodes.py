@@ -53,7 +53,10 @@ def parse_ast_node(state: PalimpsestState) -> Dict[str, Any]:
     }
 
 
-def make_propose_node(backend: BaseLLMBackend) -> Callable[..., Dict[str, Any]]:
+def make_propose_node(
+    backend: BaseLLMBackend,
+    temp_retry_increment: Optional[float] = None,
+) -> Callable[..., Dict[str, Any]]:
     """Factory creating the `propose` node bound to a specific LLM backend."""
 
     def propose_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -88,11 +91,16 @@ def make_propose_node(backend: BaseLLMBackend) -> Callable[..., Dict[str, Any]]:
         candidate = extract_candidate(raw_output)
         think = extract_think(raw_output)
 
-        # 4. Temperature escalation if model repeats an already failed candidate
+        # 4. Configurable temperature escalation if model repeats an already failed candidate
         prior_candidates = [att["candidate"] for att in history]
+        bump = (
+            temp_retry_increment
+            if temp_retry_increment is not None
+            else state.get("temp_retry_increment", settings.TEMP_RETRY_INCREMENT)
+        )
         if candidate and candidate in prior_candidates:
             # Raise temperature slightly to encourage exploration away from known failure
-            next_temp = round(current_temp + settings.TEMP_RETRY_INCREMENT, 2)
+            next_temp = round(current_temp + bump, 2)
         else:
             next_temp = current_temp
 

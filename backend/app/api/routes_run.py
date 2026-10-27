@@ -56,6 +56,7 @@ def run_synthesis_worker(
     event_queue: asyncio.Queue,
     cancel_event: threading.Event,
     backend: Optional[BaseLLMBackend] = None,
+    temp_retry_increment: Optional[float] = None,
 ) -> None:
     """Worker thread running the formal synthesis loop and dispatching threadsafe events."""
     start_time = time.perf_counter()
@@ -143,10 +144,11 @@ def run_synthesis_worker(
             candidate = extract_candidate(raw_output)
             think = extract_think(raw_output)
 
-            # Temperature bump if candidate repeats
+            # Configurable temperature bump if candidate repeats
             prior_candidates = [att["candidate"] for att in history]
+            bump = temp_retry_increment if temp_retry_increment is not None else settings.TEMP_RETRY_INCREMENT
             if candidate and candidate in prior_candidates:
-                temperature = round(temperature + settings.TEMP_RETRY_INCREMENT, 2)
+                temperature = round(temperature + bump, 2)
 
             # Freeze: Payload emitted BEFORE node_finished
             dispatch("proposal", {
@@ -354,6 +356,8 @@ async def start_run(req: RunRequest, request: Request):
                 loop,
                 event_queue,
                 cancel_event,
+                None,
+                req.temp_retry_increment,
             ),
             name=f"worker-{run_id}",
             daemon=True,

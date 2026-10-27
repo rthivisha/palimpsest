@@ -23,6 +23,12 @@ class RunRequest(BaseModel):
         default=None,
         description="Override default backend ('fake', 'ollama', 'llamacpp').",
     )
+    temp_retry_increment: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Configurable temperature bump on repeated candidates (defaults to settings.TEMP_RETRY_INCREMENT).",
+    )
 
     @field_validator("expression")
     @classmethod

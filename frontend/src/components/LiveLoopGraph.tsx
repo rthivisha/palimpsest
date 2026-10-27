@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import {
   ReactFlow,
   Background,
-  Controls,
   Node,
   Edge,
   MarkerType,
@@ -124,7 +123,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'parse_ast',
         type: 'customStep',
-        position: { x: 220, y: 10 },
+        position: { x: 220, y: 15 },
         data: {
           label: 'parse_ast',
           sublabel: 'AST Security Gate',
@@ -136,19 +135,19 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'propose',
         type: 'customStep',
-        position: { x: 220, y: 110 },
+        position: { x: 220, y: 105 },
         data: {
           label: 'propose',
-          sublabel: 'Neural Fast Guess',
+          sublabel: 'Candidate Proposer',
           icon: Sparkles,
           isActive: isProposeActive,
-          stats: latestAttempt?.candidate ? `Cand: ${latestAttempt.candidate.slice(0, 15)}...` : undefined,
+          stats: latestAttempt?.candidate ? `Cand: ${latestAttempt.candidate.length > 18 ? latestAttempt.candidate.slice(0, 15) + '...' : latestAttempt.candidate}` : undefined,
         },
       },
       {
         id: 'verify',
         type: 'customStep',
-        position: { x: 220, y: 210 },
+        position: { x: 220, y: 195 },
         data: {
           label: 'verify',
           sublabel: 'Z3 SMT Solver (QF_BV)',
@@ -160,7 +159,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'router',
         type: 'customStep',
-        position: { x: 220, y: 310 },
+        position: { x: 220, y: 285 },
         data: {
           label: 'router',
           sublabel: 'CEGIS Edge Router',
@@ -172,7 +171,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'finalize_success',
         type: 'customStep',
-        position: { x: 50, y: 410 },
+        position: { x: 70, y: 380 },
         data: {
           label: 'finalize_success',
           sublabel: 'QF_BV Proven',
@@ -185,14 +184,14 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'finalize_fail',
         type: 'customStep',
-        position: { x: 380, y: 410 },
+        position: { x: 370, y: 380 },
         data: {
           label: 'finalize_fail',
           sublabel: 'No Proof Accepted',
           icon: XCircle,
           isActive: activeNode === 'finalize_fail',
           isFailed: isFailFinal,
-          stats: isFailFinal ? (finalResult?.reason?.slice(0, 20) || 'Unverified') : undefined,
+          stats: isFailFinal ? (finalResult?.reason?.includes('Max iterations') ? 'Max iterations reached' : (finalResult?.reason || 'Unverified')) : undefined,
         },
       },
     ];
@@ -297,7 +296,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.15 }}
+          fitViewOptions={{ padding: 0.12 }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
@@ -305,7 +304,6 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
           zoomOnScroll={false}
         >
           <Background color="#1f293d" gap={16} size={1} />
-          <Controls showInteractive={false} className="!bg-slate-900 !border-slate-800 !fill-slate-300" />
         </ReactFlow>
       </div>
     </div>

@@ -197,3 +197,20 @@ def extract_candidate(raw_output: str) -> str:
 
     return ""
 
+
+def render_chatml_prompt(messages: List[Dict[str, str]]) -> str:
+    """Renders a list of messages into the standard ChatML prompt format.
+
+    Matches both Ollama's Modelfile TEMPLATE and llama-cpp's chat template:
+    - Starts strictly with `<|im_start|>` on the first character (no leading newline).
+    - Exactly one newline after each `<|im_end|>`.
+    - Ends with `<|im_start|>assistant\n` to prime the model completion.
+    """
+    parts: List[str] = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg["content"]
+        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
+    parts.append("<|im_start|>assistant\n")
+    return "".join(parts)
+
