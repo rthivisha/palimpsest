@@ -58,6 +58,7 @@ class OllamaBackend(BaseLLMBackend):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 4096,
                 "stop": ["<|im_end|>", "<|im_start|>"],
             },
         }
@@ -107,3 +108,4 @@ class OllamaBackend(BaseLLMBackend):
             raise LLMBackendError(f"Unexpected error communicating with Ollama: {exc}") from exc
 
         return "".join(generated_chunks).strip()
+

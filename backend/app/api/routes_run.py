@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 from backend.app.config import settings
 from backend.app.core.ast_utils import count_nodes
@@ -392,6 +393,7 @@ async def start_run(req: RunRequest, request: Request):
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+            background=BackgroundTask(cancel_event.set),
         )
     except Exception:
         # If any unexpected exception occurred before streaming starts, release lock

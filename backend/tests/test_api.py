@@ -604,18 +604,17 @@ class TestConcurrencyAndCancellation:
         from backend.app.api.routes_run import active_runs, run_lock
 
         # Allow worker thread to catch cancel, update telemetry, and release lock
-        run = None
-        for _ in range(40):
-            temp_db.sync()
-            run = temp_db.get_run(run_id)
-            if run and run.get("final_status") == "CANCELLED" and not run_lock.locked():
+        for _ in range(50):
+            if run_id not in active_runs and not run_lock.locked():
                 break
             await asyncio.sleep(0.1)
+        temp_db.sync()
 
         # Assert worker stopped at the next node boundary (did not sleep for 5s)
         elapsed = time.perf_counter() - start_time
         assert elapsed < 4.0, f"Worker took too long to halt on disconnect: {elapsed:.2f}s"
 
+        run = temp_db.get_run(run_id)
         assert run is not None
         assert run["final_status"] == "CANCELLED"
 
