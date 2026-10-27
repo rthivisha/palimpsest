@@ -91,7 +91,8 @@
 ## Phase 4: Frontend Development
 - [ ] Initialize Vite + React + TypeScript in `frontend/`
 - [ ] Configure Tailwind CSS, Framer Motion, and Lucide icons
-- [ ] Implement state management and SSE streaming hook `useRunStream`
+- [ ] Implement state management and SSE streaming hook `useRunStream`:
+  - [ ] UI handles HTTP 429 response with message 'previous run still finishing' and honors Retry-After header
 - [ ] Build UI Components:
   - [ ] **Cyber-Lab Header**: Theme, local backend badge, LangSmith cloud warning badge
   - [ ] **Command Center**: Expression input, presets, iteration slider, De-obfuscate action

@@ -62,14 +62,21 @@ ALLOWED_UNARY_OPS: Set[Type[ast.unaryop]] = {
 
 
 def compute_tree_depth(node: ast.AST) -> int:
-    """Recursively computes the maximum depth of an AST tree.
+    """Computes the maximum depth of an AST tree iteratively to avoid RecursionError.
 
     A single leaf node has a depth of 1. Each parent level adds 1.
+    Uses an explicit stack rather than recursion so that deep left-associated
+    expression chains (e.g., 2,400 terms) are handled safely without crashing Python.
     """
-    children = list(ast.iter_child_nodes(node))
-    if not children:
-        return 1
-    return 1 + max(compute_tree_depth(child) for child in children)
+    stack = [(node, 1)]
+    max_depth = 0
+    while stack:
+        curr, depth = stack.pop()
+        if depth > max_depth:
+            max_depth = depth
+        for child in ast.iter_child_nodes(curr):
+            stack.append((child, depth + 1))
+    return max_depth
 
 
 def validate_ast(expr_str: str) -> ast.Expression:

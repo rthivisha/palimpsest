@@ -83,7 +83,9 @@ def extract_variables(expr_or_node: Union[str, ast.AST]) -> List[str]:
 
 
 def get_ast_depth(expr_or_node: Union[str, ast.AST]) -> int:
-    """Calculates the maximum depth of the expression AST.
+    """Calculates the maximum depth of the expression AST iteratively.
+
+    Uses an explicit stack traversal to prevent RecursionError on deeply chained expressions.
 
     Args:
         expr_or_node: Expression string or parsed ast.AST.
@@ -92,14 +94,15 @@ def get_ast_depth(expr_or_node: Union[str, ast.AST]) -> int:
         The maximum tree depth as an integer.
     """
     tree = get_ast_node(expr_or_node)
-
-    def _depth(node: ast.AST) -> int:
-        children = list(ast.iter_child_nodes(node))
-        if not children:
-            return 1
-        return 1 + max(_depth(child) for child in children)
-
-    return _depth(tree)
+    stack = [(tree, 1)]
+    max_depth = 0
+    while stack:
+        curr, depth = stack.pop()
+        if depth > max_depth:
+            max_depth = depth
+        for child in ast.iter_child_nodes(curr):
+            stack.append((child, depth + 1))
+    return max_depth
 
 
 def format_expr(expr_or_node: Union[str, ast.AST]) -> str:

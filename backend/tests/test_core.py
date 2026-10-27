@@ -136,6 +136,28 @@ class TestSafetyGate:
         assert not safe
         assert "AST depth exceeds limit" in err
 
+    def test_flat_chain_2400_terms_rejected_cleanly(self):
+        """A flat chain of 2,400 terms (x+x+...+x) is rejected cleanly without RecursionError.
+
+        Verifies that no RecursionError occurs in the parser, depth check, or Z3 conversion.
+        The gate enforces the depth limit iteratively and rejects with SafetyViolationError.
+        """
+        expr = "x" + "+x" * 2399  # 4799 chars <= 5000 chars, depth = 2402 > 100
+        # 1. Gate check via is_safe_ast
+        safe, err = is_safe_ast(expr)
+        assert not safe
+        assert "AST depth exceeds limit" in err
+
+        # 2. Gate check via validate_ast raises SafetyViolationError directly without RecursionError
+        with pytest.raises(SafetyViolationError) as exc_info:
+            validate_ast(expr)
+        assert "depth exceeds limit" in str(exc_info.value).lower()
+
+        # 3. Z3 verifier catches the violation cleanly and returns STATUS_INVALID without RecursionError
+        res = verify_equivalence(expr, "x")
+        assert res["status"] == STATUS_INVALID
+        assert "depth exceeds limit" in res["error"].lower()
+
     def test_rejects_negative_shift_amounts(self):
         """Negative constant shift amounts must be rejected by the safety gate."""
         disallowed_shifts = [

@@ -28,7 +28,7 @@ flowchart TD
     User([User / Web UI]) -->|HTTP POST /api/run| API[FastAPI Server]
     API -->|SSE Stream| User
 
-    subgraph "Execution Pipeline (Threadpool Executor)"
+    subgraph "Execution Pipeline (Threadpool Worker)"
         API -->|Invoke StateGraph| LG[LangGraph Orchestrator]
 
         subgraph "Security & Parsing"
@@ -46,7 +46,7 @@ flowchart TD
 
         subgraph "Formal Verification (Z3 QF_BV)"
             VerifyNode -->|Parse Candidate AST| VerifySafety{Candidate Safe?}
-            VerifySafety -->|No| FailAttempt[Record Failed Attempt]
+            VerifySafety -->|No: INVALID Attempt| FailAttempt[Record Failed Attempt]
             VerifySafety -->|Yes| Z3Miter[Z3 Solver: original != candidate]
             Z3Miter -->|Timeout Budget / Unknown| Z3Timeout[UNKNOWN / TIMEOUT]
             Z3Miter -->|Model Witness Found| Z3SAT[SAT: Counterexample Generated]
@@ -67,7 +67,7 @@ flowchart TD
     end
 
     subgraph "Telemetry & Observability"
-        LG -.->|Dedicated Writer Queue| SQLite[(SQLite: runs & attempts in WAL mode)]
+        LG -.->|Single Writer Thread Queue| SQLite[(SQLite: runs & attempts in WAL mode)]
         LG -.->|Optional Trace Decorators| LangSmith[LangSmith Cloud Tracing]
     end
 
@@ -81,7 +81,7 @@ flowchart TD
 ### 3.1 State Schema (`PalimpsestState`)
 
 ```python
-from typing import TypedDict, List, Optional, Dict, Any, Callable
+from typing import TypedDict, List, Optional, Dict, Any
 
 class AttemptRecord(TypedDict):
     iteration: int
@@ -112,37 +112,40 @@ class PalimpsestState(TypedDict):
     error_message: Optional[str]
     temperature: float            # Adjusted upwards if model repeats candidates
     feedback_message: Optional[str]
-    cancel_callback: Optional[Callable[[], bool]]
 ```
+
+> [!NOTE]
+> Cancellation callbacks (`should_cancel`) are passed to LangGraph via the execution config: `config={"configurable": {"should_cancel": should_cancel}}` and accessed inside nodes via `config.get("configurable", {}).get("should_cancel")`, NOT stored in `PalimpsestState`.
 
 ### 3.2 Graph Nodes
 
 1. **`parse_ast`**:
-   - Validates input length ($\le 5000$ characters).
-   - Parses AST with Python `ast.parse(expr, mode='eval')`.
-   - Enforces the strict Node allowlist, recursion depth threshold ($\le 100$), and rejects negative constant shift amounts.
+   - The route handler precomputes `obf_nodes` before emitting `run_started` (set to `0` if unsafe).
+   - Node `parse_ast` re-validates input length ($\le 5000$ characters) and parses AST with Python `ast.parse(expr, mode='eval')`.
+   - Enforces the strict Node allowlist, iterative depth check ($\le 100$), and rejects negative constant shift amounts.
    - Calculates semantic `obf_nodes` count strictly over `BinOp`, `UnaryOp`, `Name`, and `Constant`.
-   - For unparseable or rejected input, `obf_nodes` is explicitly set to `0`.
-   - Initializes `iteration = 0`, `history = []`, `temperature = 0.2`.
-   - If invalid, sets `final_status = REJECTED_UNSAFE` and routes directly to `END`.
+   - If unsafe or invalid, sets `final_status = "REJECTED_UNSAFE"`, `obf_nodes = 0`, and routes directly to `END`.
 
 2. **`propose`**:
-   - Checks `cancel_callback` at node entry; aborts immediately if client disconnected.
+   - Checks `should_cancel()` at node entry; aborts immediately if client disconnected.
    - Assembles messages matching the training format:
      - Turn 1: `user` $\rightarrow$ `"De-obfuscate this 64-bit MBA expression:\n{expression}"`
      - CEGIS Turns: Formatted previous attempt + Z3 failure witness turn.
-   - Dispatches to configured backend with timeout `MODEL_TIMEOUT_SECONDS`.
+   - Dispatches to configured backend with timeout `MODEL_TIMEOUT_SECONDS` (read from configuration, not hard-coded).
    - Extracts candidate string from output (lines following `</think>`).
    - Increments `iteration += 1`.
    - If candidate was already proposed in history, raises `temperature += TEMP_RETRY_INCREMENT`.
 
 3. **`verify`**:
-   - Checks `cancel_callback` at node entry.
+   - Checks `should_cancel()` at node entry.
    - Evaluates candidate string against security gate.
-   - If candidate is syntactically invalid or unsafe, registers an `INVALID` attempt.
+   - If candidate is syntactically invalid or unsafe (e.g. garbage output from model), registers an `INVALID` attempt.
    - Instantiates a fresh, isolated `z3.Context()` and executes the Z3 64-bit BitVec miter check.
    - Computes `diff_bits` when `status == "SAT"`.
    - Appends `AttemptRecord` to `history`.
+   - If not verified and `iteration < max_iterations`, formats feedback:
+     - For `SAT`: includes witness, expected, and actual values.
+     - For `INVALID` or `UNKNOWN`: retry feedback `Error:` text is strictly single-line, truncated to ~200 characters, and never includes raw model output.
 
 4. **`finalize_success`**:
    - Sets `final_status = "VERIFIED_EQUIVALENT"`.
@@ -150,6 +153,7 @@ class PalimpsestState(TypedDict):
 
 5. **`finalize_fail`**:
    - Sets `final_status = "FAILED"`.
+   - Emits `final` event with status `"FAILED"`. No trailing `retry` event is emitted.
 
 ### 3.3 Routing & Client-Side Graph Synchronization
 - Routing logic:
@@ -164,29 +168,17 @@ class PalimpsestState(TypedDict):
 ## 4. Formal Verification: Z3 Bit-Vector (QF_BV) Contract
 
 ### 4.1 Verification Contract
-```python
-def verify_equivalence(
-    original_expr: str,
-    candidate_expr: str,
-    timeout_ms: int = 3000,
-    shift_semantics: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Formally verifies equivalence; equivalence proven by Z3 (QF_BV, 64-bit).
-    Uses a fresh z3.Context() per call.
-    Returns:
-        status: "QF_BV_UNSAT_64BIT_VERIFIED" | "SAT" | "UNKNOWN" | "INVALID"
-        witness: dict[str, int] (variable assignments disproving equivalence)
-        expected: int | None (original expression value at witness, 64-bit unsigned)
-        actual: int | None (candidate expression value at witness, 64-bit unsigned)
-        diff_bits: str | None (64-character binary string showing bit discrepancies)
-        latency_ms: float
-        error: str | None
-    """
-```
+- **Theory**: Quantifier-Free Bit-Vectors (`QF_BV`).
+- **Precision**: 64-bit unsigned bit-vectors (`z3.BitVec(name, 64, ctx=ctx)`).
+- **Miter Condition**: `z3.Not(orig_bv == cand_bv)`.
+- **Verdict Mapping**:
+  - `check() == unsat`: **Proven Equivalent**. Status: `QF_BV_UNSAT_64BIT_VERIFIED`.
+  - `check() == sat`: **Disproven (Counterexample Exists)**. Status: `SAT`. Concrete witness extracted.
+  - `check() == unknown`: **Solver Inconclusive (Timeout/Resource Limit)**. Status: `UNKNOWN`.
+  - Parse / Gate failure: **Invalid Candidate**. Status: `INVALID`.
 
 ### 4.2 Non-SAT Verification Contract & Retry Feedback Text
-- When `status != "SAT"`:
+- When candidate fails verification (`INVALID` or `UNKNOWN`), the verification event emits:
   - `witness`: `{}` (empty dictionary)
   - `expected`: `None`
   - `actual`: `None`
@@ -195,13 +187,14 @@ def verify_equivalence(
   - When status is `INVALID`:
     ```
     Z3_VERIFICATION_FAILED: INVALID
-    Error: <error_message>
+    Error: <sanitized_error_text>
     ```
   - When status is `UNKNOWN` (timeout):
     ```
     Z3_VERIFICATION_FAILED: UNKNOWN
     Error: Z3 solver timeout or resource limit reached
     ```
+  - **Constraint**: `<sanitized_error_text>` is strictly single-line, truncated to ~200 chars, and never includes raw model output.
 
 ### 4.3 Shift Semantics & Isolation
 Configured via `SHIFT_SEMANTICS`:
@@ -233,9 +226,9 @@ Strict constraints are enforced:
    - All other AST types (`Call`, `Attribute`, `Import`, `Str`, `List`, `Lambda`, `Subscript`, etc.) trigger immediate rejection.
 3. **DoS Prevention**:
    - Input length limit: $\le 5,000$ characters.
-   - Max AST recursion depth: $\le 100$ levels.
+   - Max AST recursion depth: $\le 100$ levels (enforced via iterative stack traversal to prevent `RecursionError` on 2,400+ term chains).
 4. **Host-Header Protection**:
-   FastAPI middleware validates `Host` headers, allowing only `localhost`, `127.0.0.1`, and test runners.
+   FastAPI middleware validates `Host` headers. Allowed hosts: `localhost`, `127.0.0.1`, `testserver` (used by Starlette / FastAPI TestClient), and dev ports `8000`, `5173`. Works seamlessly with the Vite dev proxy (`changeOrigin: true` or forwarded Host). Untrusted host headers return HTTP 400.
 
 ---
 
@@ -254,16 +247,25 @@ class BaseLLMBackend(ABC):
     ) -> str:
         pass
 ```
-- Real model backends stream tokens and check `should_cancel()` every chunk; fake backend checks `should_cancel()` at invocation.
-- `MODEL_TIMEOUT_SECONDS` is read from configuration (default: 10s).
+- Real model backends stream tokens and check `should_cancel()` every chunk; fake backend checks `should_cancel()` at invocation or sleep intervals.
+- `MODEL_TIMEOUT_SECONDS` is loaded from app configuration (`backend/app/config.py`), not hard-coded.
+- **Cancellation Semantics**: Cancellation takes effect at the next node boundary (next token with real backends in Phase 5). Total cancellation latency is bounded by the current step's timeout (model timeout or Z3 timeout).
 
-### 6.2 Concurrency Policy: Single-Slot Lock & HTTP 429
+### 6.2 Fake Backend Test Scenarios (`FAKE_SCENARIO`)
+To support thorough API and lifecycle testing, `FakeLLMBackend` responds to the `FAKE_SCENARIO` environment variable:
+- `None` (Default): 2-turn demo (Turn 1: `x ^ y`, Turn 2: `x + y`).
+- `always_wrong`: Proposes `x ^ y` on every turn, exercising the max-iterations boundary ending in `finalize_fail`.
+- `garbage`: Proposes unparseable syntax (`def foo(): pass`) to test `INVALID` candidate handling.
+- `slow`: Loops sleeping in 0.1-second increments (e.g. up to 5s), checking `should_cancel()` each step, enabling deterministic testing of client disconnects and cancellation.
+
+### 6.3 Concurrency Policy: Single-Slot Lock & HTTP 429
 - Local CPU inference cannot handle concurrent runs.
 - A process-wide `run_lock = threading.Lock()` gates execution.
 - The handler attempts `run_lock.acquire(blocking=False)`.
   - If busy: Returns **HTTP 429 Too Many Requests** immediately with `Retry-After: 5` and JSON `{"error": "PALIMPSEST is currently processing another de-obfuscation run. Only 1 local run is supported concurrently."}`.
   - If acquired: Released strictly in the worker's `finally` block AND if the generator is never iterated.
 - Server runs with **1 uvicorn worker** (`workers=1`).
+- The Phase 4 frontend handles HTTP 429 by displaying *"previous run still finishing"* and honoring the `Retry-After` header.
 
 ---
 
@@ -274,6 +276,7 @@ class BaseLLMBackend(ABC):
 [FastAPI Async Loop]                              [Worker Thread]
    POST /api/run
      │
+     ├─► Precomputes obf_nodes (0 if unsafe)
      ├─► Creates asyncio.Queue()
      ├─► Creates threading.Event() (cancel_event)
      ├─► Spawns thread via asyncio.to_thread() ──► Runs LangGraph:
@@ -315,6 +318,7 @@ The event stream contract freezes the emission order: **payload events are emitt
 
 2. Failing Loop (Max Iterations Reached):
    - Iterations $1 \dots K$ execute propose and verify.
+   - Retries are emitted after iterations $1 \dots K-1$; **no trailing retry** is emitted after the final iteration.
    - `node_started`: `{"node": "finalize_fail"}`
    - `node_finished`: `{"node": "finalize_fail"}`
    - `final`: `{status: "FAILED", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "..."}`
@@ -325,7 +329,15 @@ The event stream contract freezes the emission order: **payload events are emitt
    - `node_finished`: `{"node": "parse_ast"}`
    - `final`: `{status: "REJECTED_UNSAFE", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>"}`
 
-4. Stream Termination Invariant:
+4. Backend Failure (Crashed or Unreachable Backend):
+   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend}`
+   - `node_started`: `{"node": "parse_ast"}`
+   - `node_finished`: `{"node": "parse_ast"}`
+   - `node_started`: `{"node": "propose"}`
+   - `error`: `{"error": "<backend_error_message>"}`
+   - Telemetry records run with `final_status = "ERROR"`.
+
+5. Stream Termination Invariant:
    - Exactly **ONE** of `final` OR `error` terminates the stream, followed by stream closure. They are mutually exclusive.
 
 ### 7.3 String Serialization Contract
@@ -336,9 +348,17 @@ The event stream contract freezes the emission order: **payload events are emitt
 
 ## 8. Telemetry & Persistence (SQLite WAL Mode)
 
-### 8.1 Schema
+### 8.1 Dedicated Single Writer Thread
+- Telemetry writes are handled by a dedicated background thread consuming from a standard `queue.Queue()`.
+- Thread opens a single `sqlite3.connect(db_path)` with:
+  - `PRAGMA journal_mode = WAL;`
+  - `PRAGMA busy_timeout = 5000;`
+- Every write operation is wrapped in a `try ... except` block so database errors never disrupt run execution.
+- Disconnected runs are marked with `final_status = "CANCELLED"`.
+- Backend failure runs are marked with `final_status = "ERROR"`.
+
+### 8.2 Schema
 - Database path: `palimpsest.sqlite` (gitignored).
-- Connection settings: `PRAGMA journal_mode = WAL;` and `PRAGMA busy_timeout = 5000;` on every connection.
 - Tables:
   ```sql
   CREATE TABLE IF NOT EXISTS runs (
@@ -371,13 +391,30 @@ The event stream contract freezes the emission order: **payload events are emitt
 
   CREATE INDEX IF NOT EXISTS idx_attempts_run_id ON attempts(run_id);
   ```
-- **Dedicated Writer Queue**: Telemetry writes are handled by a dedicated background async queue with error isolation (`try ... except`) so DB errors never interrupt runs.
-- **Cancellation**: Disconnected runs are recorded with `final_status = "CANCELLED"`.
+- `witness_json` holds a JSON string with stringified 64-bit integer values.
 
 ---
 
 ## 9. Frontend Architecture & Vite Dev Proxy
 
 - Built with React, Vite, TypeScript, Tailwind CSS, Framer Motion, and `@xyflow/react`.
-- **Vite Proxy**: `vite.config.ts` proxies `/api` requests to `http://127.0.0.1:8000`.
+- **Vite Proxy**: `vite.config.ts` proxies `/api` requests to `http://127.0.0.1:8000` with `changeOrigin: true`.
+- **HTTP 429 Resilience**: When the backend returns 429, the UI displays *"previous run still finishing"* and disables the submit button for the duration specified by `Retry-After`.
 - **Client Graph**: Visualizes live execution. The Router node is synthesized purely client-side from `verification` and `retry` events.
+
+---
+
+## 10. Phase 3 Test Suite Specifications
+
+The Phase 3 test suite (`backend/tests/test_api.py`) covers:
+1. `test_exact_event_ordering`: Normal 2-turn run verifies that payload events arrive before `node_finished`.
+2. `test_rejected_unsafe_emits_final`: Expression violating safety gate emits `run_started` -> `node_started(parse_ast)` -> `node_finished(parse_ast)` -> `final(REJECTED_UNSAFE)`.
+3. `test_failing_run_ends_in_finalize_fail`: With `FAKE_SCENARIO=always_wrong`, runs max iterations, emits `finalize_fail` with no trailing retry, and terminates with `final(FAILED)`.
+4. `test_single_error_event_on_backend_failure`: When backend raises an exception, emits exactly one `error` event and no `final` event.
+5. `test_exact_payload_key_sets`: Verifies strict key sets for all event types.
+6. `test_disconnect_cancellation`: Using `httpx.AsyncClient`, connects to `/api/run`, reads `run_started`, then immediately closes the client. Verifies `cancel_event` is set, worker thread halts, and telemetry records `CANCELLED`.
+7. `test_large_integer_string_round_trip`: Verifies witness values $> 2^{53}-1$ are serialized as strings in SSE and REST JSON.
+8. `test_prompt_preserves_raw_integers`: Verifies prompt builder retains integer types while SSE serializes as strings.
+9. `test_concurrent_runs_return_429`: Verifies second concurrent request receives HTTP 429 with `Retry-After: 5`.
+10. `test_concurrent_z3_separate_contexts`: Verifies two concurrent threads executing `verify_equivalence` with isolated `z3.Context()` run without corruption.
+11. `test_rest_endpoints`: Verifies `/api/health`, `/api/history`, `/api/runs/{id}`, `/api/stats`, and `/api/examples` against an isolated temporary database.
