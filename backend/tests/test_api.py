@@ -786,8 +786,17 @@ class TestHostHeaderAndREST:
         data = res.json()
         assert data["status"] == "ok"
         assert data["backend"] == "fake"
+        assert data["model_name"] == "fake-scripted"
         assert "z3_version" in data
         assert data["z3_logic"] == "QF_BV (64-bit unsigned)"
+
+    def test_model_backend_env_logs_warning(self, monkeypatch, caplog):
+        """Setting legacy MODEL_BACKEND triggers a loud warning on startup."""
+        monkeypatch.setenv("MODEL_BACKEND", "ollama")
+        with caplog.at_level("WARNING"):
+            with TestClient(app):
+                pass
+        assert "Disallowed/legacy environment variable 'MODEL_BACKEND' detected" in caplog.text
 
     def test_examples_endpoint(self):
         """GET /api/examples returns curated MBA expression presets."""

@@ -99,6 +99,14 @@ async def health_check() -> Dict[str, Any]:
     z3_version = z3.get_version_string()
     backend_name = settings.PALIMPSEST_BACKEND
 
+    # Model name resolution
+    if backend_name == "ollama":
+        model_name = settings.OLLAMA_MODEL
+    elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
+        model_name = os.path.basename(settings.LLAMACPP_MODEL_PATH)
+    else:
+        model_name = "fake-scripted"
+
     # Real model reachable check
     model_reachable = True
     if backend_name == "ollama":
@@ -114,6 +122,7 @@ async def health_check() -> Dict[str, Any]:
     return {
         "status": "ok",
         "backend": backend_name,
+        "model_name": model_name,
         "model_reachable": model_reachable,
         "z3_version": z3_version,
         "z3_logic": "QF_BV (64-bit unsigned)",

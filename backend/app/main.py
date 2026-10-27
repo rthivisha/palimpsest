@@ -8,9 +8,12 @@ Architecture:
 - Lifespan management:
   Starts the telemetry background writer thread on startup, cleanly drains and stops on shutdown.
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Set
+
+logger = logging.getLogger("palimpsest")
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +62,26 @@ class HostHeaderValidationMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for the FastAPI application."""
+    # 0. Check for invalid MODEL_BACKEND env var and log resolved backend & model
+    if "MODEL_BACKEND" in os.environ:
+        logger.warning(
+            "*** WARNING: Disallowed/legacy environment variable 'MODEL_BACKEND' detected! "
+            "PALIMPSEST strictly uses 'PALIMPSEST_BACKEND'. Please update your configuration. ***"
+        )
+
+    resolved_backend = settings.PALIMPSEST_BACKEND
+    if resolved_backend == "ollama":
+        model_name = settings.OLLAMA_MODEL
+    elif resolved_backend in ("llamacpp", "llama_cpp", "llama-cpp"):
+        model_name = os.path.basename(settings.LLAMACPP_MODEL_PATH)
+    else:
+        model_name = "fake-scripted"
+
+    logger.info(
+        f"[STARTUP] PALIMPSEST de-obfuscation engine ready. "
+        f"Backend: '{resolved_backend}', Model: '{model_name}'"
+    )
+
     # 1. Initialize and start telemetry database writer thread
     telemetry_db.init_db()
     telemetry_db.start_writer()
