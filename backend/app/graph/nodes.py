@@ -54,11 +54,16 @@ def parse_ast_node(state: PalimpsestState) -> Dict[str, Any]:
     }
 
 
-def make_propose_node(backend: BaseLLMBackend) -> Callable[[PalimpsestState], Dict[str, Any]]:
+def make_propose_node(backend: BaseLLMBackend) -> Callable[..., Dict[str, Any]]:
     """Factory creating the `propose` node bound to a specific LLM backend."""
 
-    def propose_node(state: PalimpsestState) -> Dict[str, Any]:
+    def propose_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Node 2: Generates candidate simplification using the model backend."""
+        # Check cancellation at node entry
+        should_cancel = (config or {}).get("configurable", {}).get("should_cancel")
+        if should_cancel and should_cancel():
+            raise RuntimeError("Run cancelled by client disconnect")
+
         obf_expr = state["obfuscated_expr"]
         history = state.get("history", [])
         current_temp = state.get("temperature", 0.2)
@@ -73,12 +78,11 @@ def make_propose_node(backend: BaseLLMBackend) -> Callable[[PalimpsestState], Di
         )
 
         # 2. Invoke model backend
-        cancel_callback = state.get("cancel_callback")
         raw_output = backend.generate(
             messages=messages,
             temperature=current_temp,
             max_tokens=512,
-            should_cancel=cancel_callback,
+            should_cancel=should_cancel,
         )
 
         # 3. Extract candidate expression and thinking block
@@ -106,13 +110,18 @@ def make_propose_node(backend: BaseLLMBackend) -> Callable[[PalimpsestState], Di
     return propose_node
 
 
-def verify_node(state: PalimpsestState) -> Dict[str, Any]:
+def verify_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Node 3: Formal Z3 64-bit BitVec miter check.
 
     Judges whether candidate is equivalent to original.
     Equivalence proven by Z3 (QF_BV, 64-bit) if UNSAT.
     Records concrete counterexample witness if SAT.
     """
+    # Check cancellation at node entry
+    should_cancel = (config or {}).get("configurable", {}).get("should_cancel")
+    if should_cancel and should_cancel():
+        raise RuntimeError("Run cancelled by client disconnect")
+
     orig_expr = state["obfuscated_expr"]
     cand_expr = state.get("current_candidate") or ""
     iteration = state.get("iteration", 1)
@@ -136,8 +145,10 @@ def verify_node(state: PalimpsestState) -> Dict[str, Any]:
             status="SAT",
         )
     elif verif["status"] != STATUS_VERIFIED:
-        err_detail = verif.get("error") or "Verification failed"
-        feedback_msg = f"Z3_VERIFICATION_FAILED: {verif['status']}\nError: {err_detail}"
+        raw_err = verif.get("error") or "Verification failed"
+        # Sanitize error: strictly single-line, truncated to ~200 chars, never raw model output
+        clean_err = " ".join(str(raw_err).splitlines())[:200].strip()
+        feedback_msg = f"Z3_VERIFICATION_FAILED: {verif['status']}\nError: {clean_err}"
 
     # Build telemetry record
     attempt: AttemptRecord = {

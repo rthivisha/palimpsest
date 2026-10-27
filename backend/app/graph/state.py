@@ -38,5 +38,4 @@ class PalimpsestState(TypedDict):
     error_message: Optional[str]    # Detailed error message if rejected or failed
     temperature: float              # Current sampling temperature
     feedback_message: Optional[str] # Formatted feedback string from Z3 for the next prompt
-    cancel_callback: Optional[Callable[[], bool]] # Optional check to halt on client disconnect
 

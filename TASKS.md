@@ -69,21 +69,24 @@
 ---
 
 ## Phase 3: API & Telemetry
-- [ ] Implement `backend/app/telemetry/db.py`:
-  - [ ] SQLite initialization in WAL mode (`PRAGMA journal_mode=WAL`)
-  - [ ] Asynchronous non-blocking write queue for `runs` and `attempts`
-- [ ] Implement FastAPI application in `backend/app/main.py`:
-  - [ ] CORS middleware (localhost only)
-  - [ ] Threadpool execution for CPU-bound Z3/LLM operations
-- [ ] Implement API routes:
-  - [ ] `POST /api/run`: SSE event stream emitting `run_started`, `node_started`, `node_finished`, `proposal`, `verification`, `retry`, `final`, `error`
-  - [ ] Client disconnect detection and task cancellation
-  - [ ] `GET /api/history` and `GET /api/runs/{id}`
-  - [ ] `GET /api/stats`
-  - [ ] `GET /api/health`
-  - [ ] `GET /api/examples`
-- [ ] Implement API tests in `backend/tests/test_api.py` verifying SSE event ordering
-- [ ] Commit & Git Tag: `phase-3-complete`
+- [x] Implement `backend/app/telemetry/db.py`:
+  - [x] SQLite initialization in WAL mode (`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`)
+  - [x] Dedicated background single-writer thread and queue for `runs` and `attempts`
+- [x] Implement FastAPI application in `backend/app/main.py`:
+  - [x] Host-header check middleware (localhost, 127.0.0.1, testserver)
+  - [x] CORS middleware (localhost only)
+  - [x] Lifespan database writer thread management
+- [x] Implement API routes:
+  - [x] `POST /api/run`: Real-time SSE event stream emitting `run_started`, `node_started`, `node_finished`, `proposal`, `verification`, `retry`, `final`, `error`
+  - [x] Cooperative client disconnect detection and cancellation
+  - [x] Single-slot concurrency lock rejecting simultaneous runs with HTTP 429 (`Retry-After: 5`)
+  - [x] String serialization for 64-bit integer values in SSE and REST JSON
+  - [x] `GET /api/history` and `GET /api/runs/{id}`
+  - [x] `GET /api/stats`
+  - [x] `GET /api/health`
+  - [x] `GET /api/examples`
+- [x] Implement comprehensive API tests in `backend/tests/test_api.py` (55/55 tests passing)
+- [ ] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
