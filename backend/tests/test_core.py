@@ -253,7 +253,7 @@ class TestZ3Verifier:
     def test_candidate_wrong_only_on_large_inputs(self):
         """A candidate wrong only on large inputs returns SAT via fallback."""
         # For x < 16, x >> 32 == 0, so x ^ (x >> 32) == x (bounded query is UNSAT).
-        # Fallback to unconstrained query must detect discrepancy when x >= 2^32 and return SAT.
+        # Fallback to unconstrained query must detect discrepancy when x >= 4294967296 and return SAT.
         orig = "x"
         cand = "x ^ (x >> 32)"
         res = verify_equivalence(orig, cand)
