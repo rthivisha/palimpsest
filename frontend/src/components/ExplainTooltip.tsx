@@ -30,7 +30,7 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   z3: {
     title: 'Z3 SMT Solver (QF_BV)',
     content:
-      'Microsoft Z3 is a formal verification solver, NOT an AI model. In QF_BV (Quantifier-Free Bit-Vectors), Z3 algebraically checks whether there is ANY input where original != candidate across all 2^64 values. It produces mathematical proofs, never probabilistic guesses.',
+      'Microsoft Z3 is a formal verification solver, NOT an AI model. In QF_BV (Quantifier-Free Bit-Vectors), Z3 algebraically checks whether there is ANY input where original != candidate. It produces formal mathematical proofs, never probabilistic guesses.',
   },
   smt: {
     title: 'SMT Solving (Satisfiability Modulo Theories)',
@@ -40,7 +40,7 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   bitvec: {
     title: '64-bit Unsigned Bit-Vectors',
     content:
-      'Modern CPU registers operate on fixed-width words. 64-bit arithmetic wraps modulo 2^64 on overflow, and bitwise operations apply to each of the 64 individual bits. Expressions must evaluate identically under exact hardware wrapping semantics.',
+      'Modern CPU registers operate on fixed-width words. 64-bit arithmetic wraps modulo 2⁶⁴ on overflow, and bitwise operations apply to each of the 64 individual bits. Expressions must evaluate identically under exact hardware wrapping semantics.',
   },
   sat_unsat: {
     title: 'UNSAT (Equivalent) vs SAT (Counterexample)',

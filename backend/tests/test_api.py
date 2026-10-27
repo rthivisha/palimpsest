@@ -571,12 +571,15 @@ class TestConcurrencyAndCancellation:
             nonlocal run_id
             if message["type"] == "http.response.body":
                 body_text = message.get("body", b"").decode("utf-8", errors="ignore")
-                if "run_started" in body_text:
-                    for line in body_text.splitlines():
-                        if line.startswith("data:"):
-                            run_id = json.loads(line[5:])["run_id"]
-                            # Trigger mid-stream disconnect
-                            disconnect_event.set()
+                for line in body_text.splitlines():
+                    if line.startswith("data:"):
+                        try:
+                            data = json.loads(line[5:].strip())
+                            if isinstance(data, dict) and "run_id" in data:
+                                run_id = data["run_id"]
+                                disconnect_event.set()
+                        except Exception:
+                            pass
 
         scope = {
             "type": "http",

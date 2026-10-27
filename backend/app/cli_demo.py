@@ -6,28 +6,35 @@ Demonstrates the neurosymbolic CEGIS loop running against the deterministic fake
 3. Attempt 2: Model receives witness feedback -> proposes 'x + y' -> Z3 returns UNSAT.
 4. Equivalence Proven by Z3 (QF_BV, 64-bit) -> Compression reported.
 """
+import argparse
 import os
 import sys
 
 # Ensure repository root is on sys.path for direct execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
+from backend.app.config import settings
 from backend.app.graph.build import build_graph
-from backend.app.llm.fake import FakeLLMBackend
+from backend.app.llm.factory import get_backend
 
 
-def run_cli_demo(expression: str = "(x ^ y) + 2 * (x & y)", max_iterations: int = 5) -> None:
+def run_cli_demo(
+    expression: str = "(x ^ y) + 2 * (x & y)",
+    max_iterations: int = 5,
+    backend_name: str = "fake",
+) -> None:
     print("=" * 70)
     print("               PALIMPSEST (VEX-MORPH) CLI DEMO")
     print("      Neurosymbolic Mixed Boolean-Arithmetic De-Obfuscator")
     print("=" * 70)
     print(f"\n[Target Expression]: {expression}")
     print(f"[Max Iterations]:    {max_iterations}")
-    print(f"[Model Backend]:     Fake (Scripted Simulation)")
+    print(f"[Model Backend]:     {backend_name.upper()}")
     print("-" * 70)
 
-    # Build compiled LangGraph workflow with Fake backend
-    graph = build_graph(FakeLLMBackend())
+    # Instantiate configured model backend via factory
+    backend = get_backend(backend_name)
+    graph = build_graph(backend)
 
     initial_state = {
         "obfuscated_expr": expression,
@@ -98,5 +105,10 @@ def run_cli_demo(expression: str = "(x ^ y) + 2 * (x & y)", max_iterations: int 
 
 
 if __name__ == "__main__":
-    expr = sys.argv[1] if len(sys.argv) > 1 else "(x ^ y) + 2 * (x & y)"
-    run_cli_demo(expr)
+    parser = argparse.ArgumentParser(description="PALIMPSEST CLI De-Obfuscator Demo")
+    parser.add_argument("expression", nargs="?", default="(x ^ y) + 2 * (x & y)", help="MBA expression to de-obfuscate")
+    parser.add_argument("--iterations", "-i", type=int, default=5, help="Maximum CEGIS iterations (1 to 10)")
+    parser.add_argument("--backend", "-b", type=str, default=settings.PALIMPSEST_BACKEND, choices=["fake", "ollama", "llamacpp"], help="Model backend")
+    args = parser.parse_args()
+
+    run_cli_demo(args.expression, max_iterations=args.iterations, backend_name=args.backend)

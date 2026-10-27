@@ -82,7 +82,7 @@ CURATED_EXAMPLES: List[Dict[str, Any]] = [
         "transformation_steps": [
             "Step 1: Examine the opaque sub-expression: (rax & ~rax).",
             "Step 2: By bitwise definition, a bit cannot simultaneously be 1 and 0: k & ~k = 0 for every bit.",
-            "Step 3: Therefore (rax & ~rax) = 0 for all 2^64 unsigned 64-bit register states.",
+            "Step 3: Therefore (rax & ~rax) = 0 across all 64-bit unsigned register states.",
             "Step 4: Scale by constant: 0 * 1337 = 0.",
             "Step 5: Output simplifies to canonical rax.",
         ],
@@ -93,17 +93,23 @@ CURATED_EXAMPLES: List[Dict[str, Any]] = [
 @router.get("/health")
 async def health_check() -> Dict[str, Any]:
     """Returns runtime health status for solver, backends, and telemetry."""
+    import os
+    import httpx
+
     z3_version = z3.get_version_string()
     backend_name = settings.PALIMPSEST_BACKEND
 
-    # Model reachable check
+    # Real model reachable check
     model_reachable = True
     if backend_name == "ollama":
-        # In Phase 5: test ping to Ollama endpoint
-        model_reachable = True
-    elif backend_name == "llamacpp":
-        # In Phase 5: check if file exists
-        model_reachable = True
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                res = await client.get(f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+                model_reachable = res.status_code == 200
+        except Exception:
+            model_reachable = False
+    elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
+        model_reachable = os.path.exists(settings.LLAMACPP_MODEL_PATH)
 
     return {
         "status": "ok",

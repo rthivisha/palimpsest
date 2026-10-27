@@ -23,7 +23,7 @@ from backend.app.core.verifier import (
     verify_equivalence,
 )
 from backend.app.llm.base import BaseLLMBackend, LLMBackendError
-from backend.app.llm.fake import FakeLLMBackend
+from backend.app.llm.factory import get_backend
 from backend.app.llm.prompts import (
     build_messages,
     extract_candidate,
@@ -43,18 +43,6 @@ run_lock = threading.Lock()
 
 # Registry of active run cancellation events: run_id -> threading.Event
 active_runs: Dict[str, threading.Event] = {}
-
-
-def get_backend(backend_name: Optional[str] = None) -> BaseLLMBackend:
-    """Instantiates the requested LLM backend."""
-    name = (backend_name or settings.PALIMPSEST_BACKEND).lower()
-    if name == "fake":
-        return FakeLLMBackend()
-    # In Phase 5, Ollama and LlamaCpp backends will be instantiated here
-    elif name in ("ollama", "llamacpp"):
-        return FakeLLMBackend()
-    else:
-        raise ValueError(f"Unknown model backend: {name}")
 
 
 def run_synthesis_worker(
