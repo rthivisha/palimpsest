@@ -28,36 +28,45 @@ class OllamaBackend(BaseLLMBackend):
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         timeout: Optional[float] = None,
+        num_predict: Optional[int] = None,
+        keep_alive: Optional[str] = None,
     ):
         """
         Args:
             base_url: Base URL for Ollama daemon (defaults to settings.OLLAMA_BASE_URL).
             model_name: Name of the Ollama model (defaults to settings.OLLAMA_MODEL).
             timeout: Inference timeout in seconds (defaults to settings.MODEL_TIMEOUT_SECONDS).
+            num_predict: Maximum completion tokens (defaults to settings.NUM_PREDICT = 512).
+            keep_alive: Model keep-alive window in memory (defaults to settings.OLLAMA_KEEP_ALIVE).
         """
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
         self.model_name = model_name or settings.OLLAMA_MODEL
         self.timeout = timeout if timeout is not None else float(settings.MODEL_TIMEOUT_SECONDS)
+        self.num_predict = num_predict if num_predict is not None else settings.NUM_PREDICT
+        self.keep_alive = keep_alive or settings.OLLAMA_KEEP_ALIVE
 
     def generate(
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 512,
+        max_tokens: Optional[int] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Streams completion tokens from Ollama, checking for cancellation between tokens."""
         if should_cancel and should_cancel():
             raise LLMBackendError("Inference cancelled by client disconnect")
 
+        effective_max_tokens = max_tokens if max_tokens is not None else self.num_predict
+
         url = f"{self.base_url}/api/chat"
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": True,
+            "keep_alive": self.keep_alive,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
+                "num_predict": effective_max_tokens,
                 "num_ctx": 4096,
                 "stop": ["<|im_end|>", "<|im_start|>"],
             },

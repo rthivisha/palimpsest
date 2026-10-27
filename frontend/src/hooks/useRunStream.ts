@@ -14,6 +14,8 @@ interface UseRunStreamReturn {
   is429Blocked: boolean;
   retryCountdown: number;
   backend: string | null;
+  elapsedSeconds: number;
+  isModelLoading: boolean;
   startRun: (expr: string, maxIters?: number) => Promise<void>;
   cancelRun: () => Promise<void>;
   resetRun: () => void;
@@ -36,9 +38,11 @@ export function useRunStream(): UseRunStreamReturn {
   // HTTP 429 Concurrency Backoff State
   const [is429Blocked, setIs429Blocked] = useState<boolean>(false);
   const [retryCountdown, setRetryCountdown] = useState<number>(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
+  const elapsedTimerRef = useRef<number | null>(null);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -103,6 +107,13 @@ export function useRunStream(): UseRunStreamReturn {
     setAttempts([]);
     setExpression(expr);
     setMaxIterations(maxIters);
+    setElapsedSeconds(0);
+
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    const startTimestamp = performance.now();
+    elapsedTimerRef.current = window.setInterval(() => {
+      setElapsedSeconds(Number(((performance.now() - startTimestamp) / 1000).toFixed(1)));
+    }, 100);
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -322,6 +333,10 @@ export function useRunStream(): UseRunStreamReturn {
         setError(err.message || 'Stream connection failed.');
       }
     } finally {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
       setIsRunning(false);
       setActiveNode(null);
       abortControllerRef.current = null;
@@ -341,6 +356,8 @@ export function useRunStream(): UseRunStreamReturn {
     is429Blocked,
     retryCountdown,
     backend,
+    elapsedSeconds,
+    isModelLoading: isRunning && (activeNode === 'propose' || (activeNode === 'parse_ast' && attempts.length === 0)),
     startRun,
     cancelRun,
     resetRun,

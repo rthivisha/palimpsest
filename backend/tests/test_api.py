@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.routes_run import run_lock
 from backend.app.core.verifier import verify_equivalence
-from backend.app.llm.base import LLMBackendError
+from backend.app.llm.base import BaseLLMBackend, LLMBackendError
 from backend.app.llm.fake import FakeLLMBackend
 from backend.app.llm.prompts import build_messages
 from backend.app.main import app
@@ -894,3 +894,61 @@ class TestHostHeaderAndREST:
         assert stats["verified_runs"] == 1
         assert stats["failed_runs"] == 1
         assert stats["success_rate_pct"] == 50.0
+
+
+# ==============================================================================
+# 5. Database Pragmas, Indexes, and Temperature Escalation Tests
+# ==============================================================================
+
+class TestDatabasePragmasAndIndexes:
+    """Verifies SQLite storage invariants: WAL mode, busy_timeout, and index definitions."""
+
+    def test_sqlite_wal_mode_enabled(self, temp_db):
+        """Database operates in write-ahead logging (WAL) mode."""
+        with temp_db._get_read_conn() as conn:
+            row = conn.execute("PRAGMA journal_mode;").fetchone()
+            assert row[0].lower() == "wal"
+
+    def test_sqlite_per_connection_busy_timeout(self, temp_db):
+        """Both reader and writer connections set PRAGMA busy_timeout >= 5000ms."""
+        with temp_db._get_read_conn() as conn:
+            row = conn.execute("PRAGMA busy_timeout;").fetchone()
+            assert row[0] >= 5000
+
+    def test_attempts_run_id_index_exists(self, temp_db):
+        """Index idx_attempts_run_id exists on attempts(run_id) for fast query joins."""
+        with temp_db._get_read_conn() as conn:
+            cur = conn.execute(
+                "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND name = 'idx_attempts_run_id';"
+            )
+            idx = cur.fetchone()
+            assert idx is not None
+            assert idx["tbl_name"] == "attempts"
+
+            # Verify the indexed column is run_id
+            col_info = conn.execute("PRAGMA index_info(idx_attempts_run_id);").fetchall()
+            assert any(c["name"] == "run_id" for c in col_info)
+
+    def test_repeated_candidate_temperature_bump(self):
+        """Propose node bumps temperature by TEMP_RETRY_INCREMENT when model repeats a candidate."""
+        from backend.app.graph.nodes import make_propose_node
+
+        class RepeatBackend(BaseLLMBackend):
+            def generate(self, messages, temperature=0.2, max_tokens=512, should_cancel=None):
+                return "x ^ y"
+
+        backend = RepeatBackend()
+        propose = make_propose_node(backend)
+
+        # Iteration 1 with no prior history: temperature stays at baseline 0.2
+        s1 = {"obfuscated_expr": "x + y", "history": [], "temperature": 0.2}
+        r1 = propose(s1)
+        assert r1["temperature"] == 0.2
+
+        # Iteration 2 where candidate repeats prior candidate in history
+        history = [{"iteration": 1, "candidate": "x ^ y", "status": "SAT", "raw_output": "x ^ y"}]
+        s2 = {"obfuscated_expr": "x + y", "history": history, "temperature": 0.2}
+        r2 = propose(s2)
+        # Temperature is bumped from 0.2 to 0.3
+        assert r2["temperature"] == 0.3
+

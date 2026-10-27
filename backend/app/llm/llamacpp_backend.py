@@ -31,16 +31,19 @@ class LlamaCppBackend(BaseLLMBackend):
         model_path: Optional[str] = None,
         n_threads: Optional[int] = None,
         n_ctx: int = 2048,
+        num_predict: Optional[int] = None,
     ):
         """
         Args:
             model_path: Path to .gguf weights (defaults to settings.LLAMACPP_MODEL_PATH).
             n_threads: Number of CPU threads (defaults to settings.LLAMACPP_N_THREADS).
             n_ctx: Context window size in tokens (defaults to 2048).
+            num_predict: Default max completion tokens (defaults to settings.NUM_PREDICT = 512).
         """
         self.model_path = model_path or settings.LLAMACPP_MODEL_PATH
         self.n_threads = n_threads or settings.LLAMACPP_N_THREADS
         self.n_ctx = n_ctx
+        self.num_predict = num_predict if num_predict is not None else settings.NUM_PREDICT
         self._llm: Optional[Any] = None
 
     def _ensure_model_loaded(self) -> Any:
@@ -88,20 +91,21 @@ class LlamaCppBackend(BaseLLMBackend):
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 512,
+        max_tokens: Optional[int] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Generates completion via llama-cpp chat completion, checking cancellation per token."""
         if should_cancel and should_cancel():
             raise LLMBackendError("Inference cancelled by client disconnect")
 
+        effective_max_tokens = max_tokens if max_tokens is not None else self.num_predict
         llm = self._ensure_model_loaded()
 
         try:
             stream = llm.create_chat_completion(
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=effective_max_tokens,
                 stream=True,
                 stop=["<|im_end|>", "<|im_start|>"],
             )

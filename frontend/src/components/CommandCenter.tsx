@@ -8,6 +8,9 @@ interface CommandCenterProps {
   maxIterations: number;
   setMaxIterations: (val: number) => void;
   isRunning: boolean;
+  activeNode?: string | null;
+  isModelLoading?: boolean;
+  elapsedSeconds?: number;
   is429Blocked: boolean;
   retryCountdown: number;
   error: string | null;
@@ -51,6 +54,9 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   maxIterations,
   setMaxIterations,
   isRunning,
+  activeNode,
+  isModelLoading,
+  elapsedSeconds = 0,
   is429Blocked,
   retryCountdown,
   error,
@@ -189,6 +195,18 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
+            {isRunning && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/90 border border-cyan-500/30 text-xs font-mono">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400 shrink-0" />
+                <span className="text-cyan-300 font-medium">
+                  {isModelLoading ? 'Loading model...' : activeNode === 'verify' ? 'Z3 Verifying...' : 'Processing...'}
+                </span>
+                <span className="text-slate-400 border-l border-slate-700 pl-2 font-mono">
+                  {elapsedSeconds.toFixed(1)}s
+                </span>
+              </div>
+            )}
+
             {isRunning ? (
               <button
                 type="button"

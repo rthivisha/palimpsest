@@ -22,6 +22,8 @@ export function App() {
     error,
     is429Blocked,
     retryCountdown,
+    elapsedSeconds,
+    isModelLoading,
     startRun,
     cancelRun,
     loadPastRun,
@@ -71,6 +73,9 @@ export function App() {
                   maxIterations={maxIterations}
                   setMaxIterations={setMaxIterations}
                   isRunning={isRunning}
+                  activeNode={activeNode}
+                  isModelLoading={isModelLoading}
+                  elapsedSeconds={elapsedSeconds}
                   is429Blocked={is429Blocked}
                   retryCountdown={retryCountdown}
                   error={error}

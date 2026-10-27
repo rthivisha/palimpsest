@@ -82,6 +82,26 @@ async def lifespan(app: FastAPI):
         f"Backend: '{resolved_backend}', Model: '{model_name}'"
     )
 
+    # Optional model warmup
+    if settings.MODEL_WARMUP and resolved_backend == "ollama":
+        try:
+            logger.info("Executing model warm-up on Ollama...")
+            import httpx
+            with httpx.Client(timeout=15.0) as client:
+                client.post(
+                    f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                    json={
+                        "model": settings.OLLAMA_MODEL,
+                        "messages": [{"role": "user", "content": "1+1"}],
+                        "keep_alive": settings.OLLAMA_KEEP_ALIVE,
+                        "options": {"num_predict": 1},
+                        "stream": False,
+                    },
+                )
+            logger.info("Model warm-up complete.")
+        except Exception as e:
+            logger.warning(f"Model warm-up skipped/failed: {e}")
+
     # 1. Initialize and start telemetry database writer thread
     telemetry_db.init_db()
     telemetry_db.start_writer()

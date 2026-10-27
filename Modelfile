@@ -1,10 +1,8 @@
 FROM ./models/palimpsest-q4_k_m.gguf
 
-TEMPLATE """{{- range .Messages }}
-<|im_start|>{{ .Role }}
+TEMPLATE """{{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
-{{- end }}
-<|im_start|>assistant
+{{ end }}<|im_start|>assistant
 """
 
 SYSTEM ""

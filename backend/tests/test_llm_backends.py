@@ -252,6 +252,10 @@ class TestOllamaBackend:
             result = backend.generate([{"role": "user", "content": "test"}])
 
         assert result == "<think>\nSimplifying MBA\n</think>\nx + y"
+        mock_stream.assert_called_once()
+        _, kwargs = mock_stream.call_args
+        assert kwargs["json"]["options"]["num_predict"] == 512
+        assert kwargs["json"]["keep_alive"] == "5m"
 
     def test_ollama_cooperative_cancellation_mid_stream(self):
         """Verifies inference halts at token boundary when should_cancel returns True."""
@@ -321,6 +325,23 @@ class TestLlamaCppBackend:
                 backend._ensure_model_loaded()
             assert "GGUF model file not found" in str(exc_info.value)
             assert non_existent_model in str(exc_info.value)
+
+    def test_llamacpp_passes_num_predict_config(self, tmp_path):
+        """LlamaCppBackend passes configured num_predict (512) to create_chat_completion."""
+        model_file = tmp_path / "model.gguf"
+        model_file.write_text("dummy")
+
+        backend = LlamaCppBackend(model_path=str(model_file), num_predict=512)
+        mock_llm = MagicMock()
+        mock_llm.create_chat_completion.return_value = [{"choices": [{"delta": {"content": "x + y"}}]}]
+
+        with patch.object(backend, "_ensure_model_loaded", return_value=mock_llm):
+            res = backend.generate([{"role": "user", "content": "simplify"}])
+
+        assert res == "x + y"
+        mock_llm.create_chat_completion.assert_called_once()
+        _, kwargs = mock_llm.create_chat_completion.call_args
+        assert kwargs["max_tokens"] == 512
 
     def test_llamacpp_cancellation_mid_stream(self, tmp_path):
         """Verifies llama-cpp streaming cancels when should_cancel is set."""
