@@ -92,22 +92,22 @@
 ---
 
 ## Phase 4: Frontend Development
-- [ ] Initialize Vite + React + TypeScript in `frontend/`
-- [ ] Configure Tailwind CSS, Framer Motion, and Lucide icons
-- [ ] Implement state management and SSE streaming hook `useRunStream`:
-  - [ ] UI handles HTTP 429 response with message 'previous run still finishing' and honors Retry-After header
-- [ ] Build UI Components:
-  - [ ] **Cyber-Lab Header**: Theme, local backend badge, LangSmith cloud warning badge
-  - [ ] **Command Center**: Expression input, presets, iteration slider, De-obfuscate action
-  - [ ] **Live Loop Graph (`@xyflow/react`)**: Interactive node glow, active state, animated counterexample packet
-  - [ ] **Attempt Timeline**: Collapsible reasoning cards, status badges, Z3 latency indicators
-  - [ ] **Counterexample Bit Visualizer**: 64-bit row diff highlighting mismatched bits
-  - [ ] **Proof & Compression Banner**: Green Z3 verified badge, honest red failure state, node reduction percentage
-  - [ ] **Explain Mode Overlay**: Tooltips for MBA, CEGIS, Bit-Vectors, and SMT solving
-  - [ ] **History & Insights Page**: Past run table and Recharts analytics (success rate, latency)
-- [ ] Root setup: `package.json` with `concurrently` running backend + frontend
-- [ ] Verify complete end-to-end loop with `fake` backend
-- [ ] Commit & Git Tag: `phase-4-complete`
+- [x] Initialize Vite + React + TypeScript in `frontend/`
+- [x] Configure Tailwind CSS, Framer Motion, and Lucide icons
+- [x] Implement state management and SSE streaming hook `useRunStream`:
+  - [x] UI handles HTTP 429 response with message 'previous run still finishing' and honors Retry-After header
+- [x] Build UI Components:
+  - [x] **Cyber-Lab Header**: Theme, local backend badge, LangSmith cloud warning badge
+  - [x] **Command Center**: Expression input, presets, iteration slider, De-obfuscate action
+  - [x] **Live Loop Graph (`@xyflow/react`)**: Interactive node glow, active state, animated counterexample packet
+  - [x] **Attempt Timeline**: Collapsible reasoning cards, status badges, Z3 latency indicators
+  - [x] **Counterexample Bit Visualizer**: 64-bit row diff highlighting mismatched bits
+  - [x] **Proof & Compression Banner**: Green Z3 verified badge, honest red failure state, node reduction percentage
+  - [x] **Explain Mode Overlay**: Tooltips for MBA, CEGIS, Bit-Vectors, and SMT solving
+  - [x] **History & Insights Page**: Past run table and Recharts analytics (success rate, latency)
+- [x] Root setup: `package.json` with `concurrently` running backend + frontend
+- [x] Verify complete end-to-end loop with `fake` backend
+- [ ] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
