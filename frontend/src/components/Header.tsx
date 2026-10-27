@@ -7,6 +7,8 @@ interface HeaderProps {
   setActiveTab: (tab: 'main' | 'history' | 'dataset') => void;
   explainMode: boolean;
   setExplainMode: React.Dispatch<React.SetStateAction<boolean>>;
+  backend?: string | null;
+  modelName?: string | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -14,6 +16,8 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   explainMode,
   setExplainMode,
+  backend: runBackend,
+  modelName: runModelName,
 }) => {
   const [health, setHealth] = useState<SystemHealth | null>(null);
 
@@ -25,6 +29,9 @@ export const Header: React.FC<HeaderProps> = ({
       })
       .catch(() => {});
   }, []);
+
+  const activeBackend = runBackend || health?.backend || 'fake';
+  const activeModel = runModelName || health?.model_name || (activeBackend === 'fake' ? 'fake-scripted' : '');
 
   return (
     <header className="w-full border-b border-cyber-border bg-cyber-surface/90 backdrop-blur sticky top-0 z-50 px-4 sm:px-6 lg:px-8 py-2.5">
@@ -86,14 +93,19 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* System Badges & Explain Mode Toggle */}
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* Backend Badge */}
+          {/* Backend Badge & Model Name */}
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-cyber-border bg-cyber-bg text-xs font-mono"
             title="Active Model Inference Engine"
           >
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <span className={`w-2 h-2 rounded-full ${activeBackend === 'fake' ? 'bg-amber-400' : 'bg-cyan-400 animate-ping'}`} />
             <span className="text-slate-400">LLM:</span>
-            <span className="text-cyan-300 font-semibold uppercase">{health?.backend || 'FAKE'}</span>
+            <span className="text-cyan-300 font-semibold uppercase">{activeBackend}</span>
+            {activeModel && (
+              <span className="text-slate-400 border-l border-slate-700 pl-1.5 text-[11px]">
+                {activeModel}
+              </span>
+            )}
           </div>
 
           {/* SMT Solver Badge */}

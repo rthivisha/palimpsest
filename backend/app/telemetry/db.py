@@ -64,9 +64,15 @@ class TelemetryDB:
                         attempts INTEGER NOT NULL,
                         total_ms REAL NOT NULL,
                         backend TEXT NOT NULL,
+                        model_name TEXT,
                         max_iterations INTEGER NOT NULL
                     );
                 """)
+                # Migration: add model_name column if table already exists without it
+                cursor = conn.execute("PRAGMA table_info(runs);")
+                columns = [row[1] for row in cursor.fetchall()]
+                if "model_name" not in columns:
+                    conn.execute("ALTER TABLE runs ADD COLUMN model_name TEXT;")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS attempts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,8 +147,8 @@ class TelemetryDB:
                                 INSERT OR REPLACE INTO runs (
                                     run_id, timestamp, expression, obf_nodes,
                                     final_status, final_expr, compression_pct,
-                                    attempts, total_ms, backend, max_iterations
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                                    attempts, total_ms, backend, model_name, max_iterations
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                             """, (
                                 data["run_id"],
                                 data.get("timestamp", datetime.now(timezone.utc).isoformat()),
@@ -154,6 +160,7 @@ class TelemetryDB:
                                 data.get("attempts", 0),
                                 data.get("total_ms", 0.0),
                                 data.get("backend", "fake"),
+                                data.get("model_name"),
                                 data.get("max_iterations", 5),
                             ))
                     elif action == "update_run_status":
@@ -241,19 +248,28 @@ class TelemetryDB:
         conn.execute("PRAGMA busy_timeout = 5000;")
         return conn
 
-    def get_history(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_history(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        exclude_fake: bool = False,
+    ) -> List[Dict[str, Any]]:
         """Returns paginated history of past runs."""
         try:
             self.sync()
             with self._get_read_conn() as conn:
-                cur = conn.execute("""
+                query = """
                     SELECT run_id, timestamp, expression, obf_nodes,
                            final_status, final_expr, compression_pct,
-                           attempts, total_ms, backend, max_iterations
+                           attempts, total_ms, backend, model_name, max_iterations
                     FROM runs
-                    ORDER BY timestamp DESC
-                    LIMIT ? OFFSET ?;
-                """, (limit, offset))
+                """
+                params: List[Any] = []
+                if exclude_fake:
+                    query += " WHERE LOWER(backend) != 'fake' "
+                query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?;"
+                params.extend([limit, offset])
+                cur = conn.execute(query, tuple(params))
                 return [dict(row) for row in cur.fetchall()]
         except Exception as exc:
             logger.error("Error reading run history: %s", exc)
@@ -267,7 +283,7 @@ class TelemetryDB:
                 cur = conn.execute("""
                     SELECT run_id, timestamp, expression, obf_nodes,
                            final_status, final_expr, compression_pct,
-                           attempts, total_ms, backend, max_iterations
+                           attempts, total_ms, backend, model_name, max_iterations
                     FROM runs
                     WHERE run_id = ?;
                 """, (run_id,))
@@ -305,12 +321,13 @@ class TelemetryDB:
             logger.error("Error reading run %s: %s", run_id, exc)
             return None
 
-    def get_stats(self) -> Dict[str, Any]:
-        """Calculates aggregate statistics over all runs."""
+    def get_stats(self, exclude_fake: bool = False) -> Dict[str, Any]:
+        """Calculates aggregate statistics over runs, optionally excluding FAKE runs."""
         try:
             self.sync()
             with self._get_read_conn() as conn:
-                cur = conn.execute("""
+                where_clause = " WHERE LOWER(backend) != 'fake'" if exclude_fake else ""
+                cur = conn.execute(f"""
                     SELECT
                         COUNT(*) as total_runs,
                         SUM(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN 1 ELSE 0 END) as verified_runs,
@@ -318,7 +335,7 @@ class TelemetryDB:
                         AVG(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN compression_pct ELSE NULL END) as avg_compression,
                         AVG(total_ms) as avg_latency_ms,
                         AVG(attempts) as avg_attempts
-                    FROM runs;
+                    FROM runs{where_clause};
                 """)
                 row = cur.fetchone()
                 if not row or row["total_runs"] == 0:

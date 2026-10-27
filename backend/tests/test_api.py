@@ -379,13 +379,13 @@ class TestSSEStreaming:
     def test_exact_payload_key_sets(self, temp_db):
         """Every event emitted strictly adheres to the frozen payload key schema."""
         expected_keys = {
-            "run_started": {"run_id", "expression", "obf_nodes", "max_iterations", "backend"},
+            "run_started": {"run_id", "expression", "obf_nodes", "max_iterations", "backend", "model_name"},
             "node_started": {"node"},
             "node_finished": {"node"},
             "proposal": {"iteration", "raw_output", "think", "candidate"},
             "verification": {"iteration", "candidate", "status", "latency_ms", "witness", "expected", "actual", "diff_bits"},
             "retry": {"iteration", "feedback_message"},
-            "final": {"status", "final_expr", "obf_nodes", "final_nodes", "compression_pct", "total_ms", "attempts", "reason"},
+            "final": {"status", "final_expr", "obf_nodes", "final_nodes", "compression_pct", "total_ms", "attempts", "reason", "backend", "model_name"},
         }
 
         client = TestClient(app)
@@ -797,6 +797,21 @@ class TestHostHeaderAndREST:
             with TestClient(app):
                 pass
         assert "Disallowed/legacy environment variable 'MODEL_BACKEND' detected" in caplog.text
+
+    def test_run_request_schema_strict_fields(self):
+        """Verifies RunRequest schema only permits expression and max_iterations (backend and temp_retry_increment are config-only)."""
+        from backend.app.schemas import RunRequest
+        # Valid instantiation
+        req = RunRequest(expression="x + y", max_iterations=3)
+        assert req.expression == "x + y"
+        assert req.max_iterations == 3
+
+        # Assert backend and temp_retry_increment are NOT fields on RunRequest
+        fields = RunRequest.model_fields.keys()
+        assert "expression" in fields
+        assert "max_iterations" in fields
+        assert "backend" not in fields
+        assert "temp_retry_increment" not in fields
 
     def test_examples_endpoint(self):
         """GET /api/examples returns curated MBA expression presets."""

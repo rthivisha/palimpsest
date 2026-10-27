@@ -51,6 +51,12 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono">
+            {finalResult.backend && (
+              <div className="px-2.5 py-1 rounded bg-slate-900/90 border border-slate-700 text-cyan-300 font-mono text-xs">
+                <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
+                {finalResult.model_name && <span className="text-slate-400"> · {finalResult.model_name}</span>}
+              </div>
+            )}
             <div className="px-2.5 py-1 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300">
               <span className="text-slate-400">Total: </span>
               <span className="font-bold">{finalResult.total_ms} ms</span>
@@ -134,7 +140,13 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-4 text-xs font-mono text-slate-400 pt-2 border-t border-rose-900/40">
+      <div className="flex items-center gap-4 text-xs font-mono text-slate-400 pt-2 border-t border-rose-900/40 flex-wrap">
+        {finalResult.backend && (
+          <div className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-rose-300 font-mono text-xs">
+            <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
+            {finalResult.model_name && <span className="text-slate-400"> · {finalResult.model_name}</span>}
+          </div>
+        )}
         <div>Total time: <span className="text-slate-200">{finalResult.total_ms} ms</span></div>
         <div>Attempts made: <span className="text-slate-200">{finalResult.attempts}</span></div>
         <div>Obfuscated complexity: <span className="text-slate-200">{finalResult.obf_nodes} nodes</span></div>

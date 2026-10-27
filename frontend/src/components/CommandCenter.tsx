@@ -18,6 +18,7 @@ interface CommandCenterProps {
   onStartRun: (expr: string, maxIters: number) => void;
   onCancelRun: () => void;
   explainMode: boolean;
+  fakeHint?: string | null;
 }
 
 const PRESETS = [
@@ -64,6 +65,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   onStartRun,
   onCancelRun,
   explainMode,
+  fakeHint,
 }) => {
   const [copiedPreset, setCopiedPreset] = useState<string | null>(null);
 
@@ -170,6 +172,12 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               </button>
             ))}
           </div>
+          {fakeHint && (
+            <p className="mt-2 text-[11px] font-mono text-amber-400/90 flex items-center gap-1.5 bg-amber-950/30 border border-amber-500/30 px-2.5 py-1 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+              <span>{fakeHint}</span>
+            </p>
+          )}
         </div>
 
         {/* Controls: Iterations slider & Action buttons */}

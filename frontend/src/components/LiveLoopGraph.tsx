@@ -58,7 +58,7 @@ const GraphStepNode: React.FC<{
 
   return (
     <div
-      className={`px-3.5 py-2.5 rounded-lg border ${borderColor} ${bgColor} ${glowStyle} transition-all duration-300 w-48 text-left relative`}
+      className={`px-3 py-2 rounded-lg border ${borderColor} ${bgColor} ${glowStyle} transition-all duration-300 w-44 text-left relative`}
     >
       <Handle type="target" position={Position.Top} className="!bg-slate-600 !w-2 !h-2" />
       <div className="flex items-center gap-2 mb-1">
@@ -81,7 +81,7 @@ const GraphStepNode: React.FC<{
         </div>
       </div>
       {data.stats && (
-        <div className="mt-1 text-[10px] text-slate-400 font-mono border-t border-slate-800/80 pt-1">
+        <div className="mt-1 text-[10px] text-slate-400 font-mono border-t border-slate-800/80 pt-1 break-words whitespace-normal leading-tight">
           {data.stats}
         </div>
       )}
@@ -123,7 +123,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'parse_ast',
         type: 'customStep',
-        position: { x: 220, y: 15 },
+        position: { x: 180, y: 15 },
         data: {
           label: 'parse_ast',
           sublabel: 'AST Security Gate',
@@ -135,19 +135,19 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'propose',
         type: 'customStep',
-        position: { x: 220, y: 105 },
+        position: { x: 180, y: 105 },
         data: {
           label: 'propose',
           sublabel: 'Candidate Proposer',
           icon: Sparkles,
           isActive: isProposeActive,
-          stats: latestAttempt?.candidate ? `Cand: ${latestAttempt.candidate.length > 18 ? latestAttempt.candidate.slice(0, 15) + '...' : latestAttempt.candidate}` : undefined,
+          stats: latestAttempt?.candidate ? `Cand: ${latestAttempt.candidate}` : undefined,
         },
       },
       {
         id: 'verify',
         type: 'customStep',
-        position: { x: 220, y: 195 },
+        position: { x: 180, y: 195 },
         data: {
           label: 'verify',
           sublabel: 'Z3 SMT Solver (QF_BV)',
@@ -159,7 +159,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'router',
         type: 'customStep',
-        position: { x: 220, y: 285 },
+        position: { x: 180, y: 285 },
         data: {
           label: 'router',
           sublabel: 'CEGIS Edge Router',
@@ -171,7 +171,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'finalize_success',
         type: 'customStep',
-        position: { x: 70, y: 380 },
+        position: { x: 50, y: 380 },
         data: {
           label: 'finalize_success',
           sublabel: 'QF_BV Proven',
@@ -184,14 +184,14 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
       {
         id: 'finalize_fail',
         type: 'customStep',
-        position: { x: 370, y: 380 },
+        position: { x: 310, y: 380 },
         data: {
           label: 'finalize_fail',
           sublabel: 'No Proof Accepted',
           icon: XCircle,
           isActive: activeNode === 'finalize_fail',
           isFailed: isFailFinal,
-          stats: isFailFinal ? (finalResult?.reason?.includes('Max iterations') ? 'Max iterations reached' : (finalResult?.reason || 'Unverified')) : undefined,
+          stats: isFailFinal ? (finalResult?.reason || 'Unverified') : undefined,
         },
       },
     ];
@@ -292,11 +292,14 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
 
       <div className="flex-1 w-full rounded-lg overflow-hidden border border-cyber-border/60 bg-[#070b12] relative">
         <ReactFlow
+          key={`${attempts.length}-${finalResult?.status || 'idle'}`}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.12 }}
+          minZoom={0.2}
+          maxZoom={1.5}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}

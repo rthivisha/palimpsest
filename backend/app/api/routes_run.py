@@ -57,6 +57,7 @@ def run_synthesis_worker(
     cancel_event: threading.Event,
     backend: Optional[BaseLLMBackend] = None,
     temp_retry_increment: Optional[float] = None,
+    model_name: Optional[str] = None,
 ) -> None:
     """Worker thread running the formal synthesis loop and dispatching threadsafe events."""
     start_time = time.perf_counter()
@@ -74,13 +75,14 @@ def run_synthesis_worker(
     try:
         llm = backend or get_backend(backend_name)
 
-        # 1. Emit run_started
+        # 1. Emit run_started with backend and model_name
         dispatch("run_started", {
             "run_id": run_id,
             "expression": expression,
             "obf_nodes": obf_nodes,
             "max_iterations": max_iterations,
             "backend": backend_name,
+            "model_name": model_name,
         })
 
         # 2. Node: parse_ast
@@ -99,6 +101,8 @@ def run_synthesis_worker(
                 "total_ms": total_ms,
                 "attempts": 0,
                 "reason": f"Security Gate Rejection: {err_msg}",
+                "backend": backend_name,
+                "model_name": model_name,
             })
             telemetry_db.update_run({
                 "run_id": run_id,
@@ -232,6 +236,8 @@ def run_synthesis_worker(
                     "total_ms": total_ms,
                     "attempts": iteration,
                     "reason": None,
+                    "backend": backend_name,
+                    "model_name": model_name,
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
@@ -273,6 +279,8 @@ def run_synthesis_worker(
                     "total_ms": total_ms,
                     "attempts": iteration,
                     "reason": "Max iterations reached without proving equivalence",
+                    "backend": backend_name,
+                    "model_name": model_name,
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
@@ -322,7 +330,13 @@ async def start_run(req: RunRequest, request: Request):
 
     try:
         run_id = f"run_{uuid.uuid4().hex[:12]}"
-        backend_name = req.backend or settings.PALIMPSEST_BACKEND
+        backend_name = settings.PALIMPSEST_BACKEND
+        if backend_name == "ollama":
+            model_name = settings.OLLAMA_MODEL
+        elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
+            model_name = os.path.basename(settings.LLAMACPP_MODEL_PATH)
+        else:
+            model_name = "fake-scripted"
 
         # 2. Handler pre-calculates obf_nodes before run_started (0 if unsafe)
         safe, _ = is_safe_ast(req.expression)
@@ -335,6 +349,7 @@ async def start_run(req: RunRequest, request: Request):
             "obf_nodes": obf_nodes,
             "final_status": "RUNNING",
             "backend": backend_name,
+            "model_name": model_name,
             "max_iterations": req.max_iterations,
         })
 
@@ -357,7 +372,8 @@ async def start_run(req: RunRequest, request: Request):
                 event_queue,
                 cancel_event,
                 None,
-                req.temp_retry_increment,
+                settings.TEMP_RETRY_INCREMENT,
+                model_name,
             ),
             name=f"worker-{run_id}",
             daemon=True,

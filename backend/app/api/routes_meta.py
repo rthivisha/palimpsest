@@ -119,11 +119,18 @@ async def health_check() -> Dict[str, Any]:
     elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
         model_reachable = os.path.exists(settings.LLAMACPP_MODEL_PATH)
 
+    fake_hint = (
+        "Scripted demo model: only the Classic 2-Turn Demo is solvable"
+        if backend_name == "fake"
+        else None
+    )
+
     return {
         "status": "ok",
         "backend": backend_name,
         "model_name": model_name,
         "model_reachable": model_reachable,
+        "fake_hint": fake_hint,
         "z3_version": z3_version,
         "z3_logic": "QF_BV (64-bit unsigned)",
         "langsmith_tracing": settings.LANGSMITH_TRACING,
@@ -131,9 +138,9 @@ async def health_check() -> Dict[str, Any]:
 
 
 @router.get("/stats")
-async def get_stats() -> Dict[str, Any]:
+async def get_stats(exclude_fake: bool = False) -> Dict[str, Any]:
     """Returns aggregate synthesis statistics over past de-obfuscation runs."""
-    return telemetry_db.get_stats()
+    return telemetry_db.get_stats(exclude_fake=exclude_fake)
 
 
 @router.get("/examples")

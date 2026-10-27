@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { CommandCenter } from './components/CommandCenter';
 import { LiveLoopGraph } from './components/LiveLoopGraph';
@@ -7,12 +7,23 @@ import { ProofBanner } from './components/ProofBanner';
 import { HistoryPage } from './pages/HistoryPage';
 import { DatasetExplorer } from './pages/DatasetExplorer';
 import { useRunStream } from './hooks/useRunStream';
+import { SystemHealth } from './types';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'main' | 'history' | 'dataset'>('main');
   const [explainMode, setExplainMode] = useState<boolean>(true);
   const [expression, setExpression] = useState<string>('(x ^ y) + 2 * (x & y)');
   const [maxIterations, setMaxIterations] = useState<number>(5);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setHealth(data);
+      })
+      .catch(() => {});
+  }, []);
 
   const {
     isRunning,
@@ -22,6 +33,8 @@ export function App() {
     error,
     is429Blocked,
     retryCountdown,
+    backend,
+    modelName,
     elapsedSeconds,
     isModelLoading,
     startRun,
@@ -29,6 +42,13 @@ export function App() {
     loadPastRun,
     clearError,
   } = useRunStream();
+
+  const currentBackend = backend || health?.backend || 'fake';
+  const currentModelName = modelName || health?.model_name || '';
+  const fakeHint =
+    currentBackend === 'fake'
+      ? health?.fake_hint || 'Scripted demo model: only the Classic 2-Turn Demo is solvable'
+      : null;
 
   const handleStartRun = (expr: string, maxIters: number) => {
     startRun(expr, maxIters);
@@ -40,6 +60,41 @@ export function App() {
     loadPastRun(detail);
   };
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const runIdParam = params.get('run_id');
+    const replayLatest = params.get('replay_latest');
+    const tabParam = params.get('tab');
+
+    if (tabParam === 'history' || tabParam === 'dataset' || tabParam === 'main') {
+      setActiveTab(tabParam);
+    }
+
+    if (runIdParam) {
+      fetch(`/api/runs/${runIdParam}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((detail) => {
+          if (detail) handleReplayRun(detail);
+        })
+        .catch(() => {});
+    } else if (replayLatest) {
+      fetch('/api/history?limit=1')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const run = Array.isArray(data) ? data[0] : (data?.runs ? data.runs[0] : null);
+          if (run && run.run_id) {
+            fetch(`/api/runs/${run.run_id}`)
+              .then((res) => (res.ok ? res.json() : null))
+              .then((detail) => {
+                if (detail) handleReplayRun(detail);
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-cyber-bg text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-black">
       {/* Forensic Cyber-Lab Header */}
@@ -48,6 +103,8 @@ export function App() {
         setActiveTab={setActiveTab}
         explainMode={explainMode}
         setExplainMode={setExplainMode}
+        backend={currentBackend}
+        modelName={currentModelName}
       />
 
       {/* Main Container */}
@@ -83,6 +140,7 @@ export function App() {
                   onStartRun={handleStartRun}
                   onCancelRun={cancelRun}
                   explainMode={explainMode}
+                  fakeHint={fakeHint}
                 />
 
                 <AttemptTimeline

@@ -39,6 +39,7 @@ export interface RunStartedPayload {
   obf_nodes: number;
   max_iterations: number;
   backend: string;
+  model_name?: string;
 }
 
 export interface FinalPayload {
@@ -50,6 +51,8 @@ export interface FinalPayload {
   total_ms: number;
   attempts: number;
   reason: string | null;
+  backend?: string;
+  model_name?: string;
 }
 
 export interface RunSummary {
@@ -63,6 +66,7 @@ export interface RunSummary {
   attempts: number;
   total_ms: number;
   backend: string;
+  model_name?: string;
   max_iterations: number;
 }
 
@@ -95,6 +99,8 @@ export interface SystemHealth {
   status: string;
   backend: string;
   model_name: string;
+  model_reachable?: boolean;
+  fake_hint?: string | null;
   z3_version: string;
   z3_logic: string;
   langsmith_enabled: boolean;

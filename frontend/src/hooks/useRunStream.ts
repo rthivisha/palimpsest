@@ -14,6 +14,7 @@ interface UseRunStreamReturn {
   is429Blocked: boolean;
   retryCountdown: number;
   backend: string | null;
+  modelName: string | null;
   elapsedSeconds: number;
   isModelLoading: boolean;
   startRun: (expr: string, maxIters?: number) => Promise<void>;
@@ -34,6 +35,7 @@ export function useRunStream(): UseRunStreamReturn {
   const [finalResult, setFinalResult] = useState<FinalPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backend, setBackend] = useState<string | null>(null);
+  const [modelName, setModelName] = useState<string | null>(null);
 
   // HTTP 429 Concurrency Backoff State
   const [is429Blocked, setIs429Blocked] = useState<boolean>(false);
@@ -55,6 +57,7 @@ export function useRunStream(): UseRunStreamReturn {
     setAttempts([]);
     setFinalResult(null);
     setError(null);
+    setModelName(null);
   }, []);
 
   const loadPastRun = useCallback((pastRun: RunDetail) => {
@@ -65,6 +68,7 @@ export function useRunStream(): UseRunStreamReturn {
     setObfNodes(pastRun.obf_nodes);
     setMaxIterations(pastRun.max_iterations);
     setBackend(pastRun.backend);
+    if (pastRun.model_name) setModelName(pastRun.model_name);
     setAttempts(pastRun.attempts_history || []);
     setFinalResult({
       status: pastRun.final_status,
@@ -74,7 +78,9 @@ export function useRunStream(): UseRunStreamReturn {
       compression_pct: pastRun.compression_pct,
       total_ms: pastRun.total_ms,
       attempts: pastRun.attempts,
-      reason: pastRun.final_status === 'VERIFIED_EQUIVALENT' ? null : 'Loaded from historical telemetry records',
+      reason: pastRun.final_status === 'VERIFIED_EQUIVALENT' ? null : 'Max iterations reached without proving equivalence',
+      backend: pastRun.backend,
+      model_name: pastRun.model_name,
     });
     setError(null);
   }, []);
@@ -223,6 +229,7 @@ export function useRunStream(): UseRunStreamReturn {
               setRunId(payload.run_id);
               setObfNodes(payload.obf_nodes);
               setBackend(payload.backend);
+              if (payload.model_name) setModelName(payload.model_name);
               break;
             }
 
@@ -356,6 +363,7 @@ export function useRunStream(): UseRunStreamReturn {
     is429Blocked,
     retryCountdown,
     backend,
+    modelName,
     elapsedSeconds,
     isModelLoading: isRunning && (activeNode === 'propose' || (activeNode === 'parse_ast' && attempts.length === 0)),
     startRun,

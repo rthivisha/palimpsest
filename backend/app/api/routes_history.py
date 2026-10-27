@@ -11,9 +11,10 @@ router = APIRouter()
 async def get_history(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    exclude_fake: bool = Query(default=False),
 ) -> List[Dict[str, Any]]:
     """Returns paginated history of past de-obfuscation runs."""
-    return telemetry_db.get_history(limit=limit, offset=offset)
+    return telemetry_db.get_history(limit=limit, offset=offset, exclude_fake=exclude_fake)
 
 
 @router.get("/runs/{run_id}")

@@ -23,14 +23,15 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [hideFake, setHideFake] = useState<boolean>(false);
 
-  const fetchTelemetry = async () => {
+  const fetchTelemetry = async (excludeFake: boolean = false) => {
     setLoading(true);
     setError(null);
     try {
       const [histRes, statsRes] = await Promise.all([
-        fetch('/api/history?limit=50'),
-        fetch('/api/stats'),
+        fetch(`/api/history?limit=50&exclude_fake=${excludeFake}`),
+        fetch(`/api/stats?exclude_fake=${excludeFake}`),
       ]);
 
       if (histRes.ok) {
@@ -49,8 +50,8 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
   };
 
   useEffect(() => {
-    fetchTelemetry();
-  }, []);
+    fetchTelemetry(hideFake);
+  }, [hideFake]);
 
   const handleInspect = async (runId: string) => {
     try {
@@ -110,13 +111,25 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
           </p>
         </div>
 
-        <button
-          onClick={fetchTelemetry}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyber-surface border border-cyber-border text-slate-300 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyber-surface border border-cyber-border text-slate-300 cursor-pointer hover:border-cyan-500/40 transition-colors">
+            <input
+              type="checkbox"
+              checked={hideFake}
+              onChange={(e) => setHideFake(e.target.checked)}
+              className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+            />
+            <span>Hide FAKE runs</span>
+          </label>
+
+          <button
+            onClick={() => fetchTelemetry(hideFake)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono bg-cyber-surface border border-cyber-border text-slate-300 hover:text-cyan-400 hover:border-cyan-500/40 transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {/* Aggregate Stats Cards */}
@@ -281,6 +294,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
               <thead className="bg-cyber-bg text-slate-400 border-b border-cyber-border">
                 <tr>
                   <th className="py-2.5 px-4">Time</th>
+                  <th className="py-2.5 px-4">Backend / Model</th>
                   <th className="py-2.5 px-4">Obfuscated Expression</th>
                   <th className="py-2.5 px-4">Status</th>
                   <th className="py-2.5 px-4">Proven Simplified Form</th>
@@ -300,6 +314,16 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                     <tr key={run.run_id} className="hover:bg-slate-900/40 transition-colors">
                       <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
                         {new Date(run.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-900 border border-slate-700 text-cyan-300">
+                          {run.backend?.toUpperCase()}
+                        </span>
+                        {run.model_name && (
+                          <span className="ml-1 text-[10px] text-slate-400">
+                            {run.model_name}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-slate-300 font-semibold max-w-[200px] truncate" title={run.expression}>
                         {run.expression}
