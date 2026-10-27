@@ -86,7 +86,7 @@
   - [x] `GET /api/health`
   - [x] `GET /api/examples`
 - [x] Implement comprehensive API tests in `backend/tests/test_api.py` (55/55 tests passing)
-- [ ] Commit & User Review (Tags handled by user; do not tag)
+- [x] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
@@ -107,7 +107,7 @@
   - [x] **History & Insights Page**: Past run table and Recharts analytics (success rate, latency)
 - [x] Root setup: `package.json` with `concurrently` running backend + frontend
 - [x] Verify complete end-to-end loop with `fake` backend
-- [ ] Commit & User Review (Tags handled by user; do not tag)
+- [x] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
@@ -120,7 +120,7 @@
 - [x] Update documentation with step-by-step model import instructions:
   - [x] `ollama create palimpsest -f Modelfile`
   - [x] Fallback instructions for `llama-cpp-python`
-- [ ] Commit & User Review (Tags handled by user; do not tag)
+- [x] Commit & User Review (Tags handled by user; do not tag)
 - [ ] **STOP AND REQUEST USER REVIEW**
 
 ---
