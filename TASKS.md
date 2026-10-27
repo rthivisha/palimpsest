@@ -38,31 +38,31 @@
 ---
 
 ## Phase 2: LangGraph Orchestration & Fake Backend
-- [ ] Implement `backend/app/llm/base.py`:
-  - [ ] Base LLM backend interface `BaseLLMBackend`
-  - [ ] Message schemas and ChatML formatting helpers
-- [ ] Implement `backend/app/llm/prompts.py`:
-  - [ ] Prompt builder matching training format character-for-character
-  - [ ] Candidate extractor parsing `<think>` blocks defensive against malformed tags
-- [ ] Implement `backend/app/llm/fake.py`:
-  - [ ] Scripted fake model backend: first guess `x ^ y`, second guess `x + y`
-  - [ ] Formatted `<think>` output reproduction
-- [ ] Implement `backend/app/graph/state.py`:
-  - [ ] `PalimpsestState` and `AttemptRecord` TypedDict definitions
-- [ ] Implement `backend/app/graph/nodes.py`:
-  - [ ] `parse_ast_node`
-  - [ ] `propose_node` (with repeated candidate temperature escalation)
-  - [ ] `verify_node` (with AST gate and Z3 verification)
-  - [ ] `finalize_success_node` and `finalize_fail_node`
-- [ ] Implement `backend/app/graph/routers.py`:
-  - [ ] Conditional edge routing after verification
-- [ ] Implement `backend/app/graph/build.py`:
-  - [ ] StateGraph construction and compilation
-- [ ] Implement CLI demo `backend/app/cli_demo.py` demonstrating:
-  - [ ] Input: `(x ^ y) + 2 * (x & y)`
-  - [ ] Attempt 1: `x ^ y` -> SAT with witness `{'x': 1, 'y': 1}`, expected 2, actual 0
-  - [ ] Attempt 2: `x + y` -> UNSAT -> `VERIFIED_EQUIVALENT`
-- [ ] Implement tests in `backend/tests/test_graph.py`
+- [x] Implement `backend/app/llm/base.py`:
+  - [x] Base LLM backend interface `BaseLLMBackend`
+  - [x] Message schemas and ChatML formatting helpers
+- [x] Implement `backend/app/llm/prompts.py`:
+  - [x] Prompt builder matching training format character-for-character
+  - [x] Candidate extractor parsing `<think>` blocks defensive against malformed tags
+- [x] Implement `backend/app/llm/fake.py`:
+  - [x] Scripted fake model backend: first guess `x ^ y`, second guess `x + y`
+  - [x] Formatted `<think>` output reproduction
+- [x] Implement `backend/app/graph/state.py`:
+  - [x] `PalimpsestState` and `AttemptRecord` TypedDict definitions
+- [x] Implement `backend/app/graph/nodes.py`:
+  - [x] `parse_ast_node`
+  - [x] `propose_node` (with repeated candidate temperature escalation)
+  - [x] `verify_node` (with AST gate and Z3 verification)
+  - [x] `finalize_success_node` and `finalize_fail_node`
+- [x] Implement `backend/app/graph/routers.py`:
+  - [x] Conditional edge routing after verification
+- [x] Implement `backend/app/graph/build.py`:
+  - [x] StateGraph construction and compilation
+- [x] Implement CLI demo `backend/app/cli_demo.py` demonstrating:
+  - [x] Input: `(x ^ y) + 2 * (x & y)`
+  - [x] Attempt 1: `x ^ y` -> SAT with witness `{'x': 1, 'y': 1}`, expected 2, actual 0
+  - [x] Attempt 2: `x + y` -> UNSAT -> `VERIFIED_EQUIVALENT`
+- [x] Implement tests in `backend/tests/test_graph.py`
 - [ ] Commit & Git Tag: `phase-2-complete`
 - [ ] **STOP AND REQUEST USER REVIEW**
 
