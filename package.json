@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "concurrently -n \"backend,frontend\" -c \"blue,cyan\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "node scripts/dev.js",
     "dev:backend": ".venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload",
     "dev:frontend": "cd frontend && node node_modules/vite/bin/vite.js",
     "build:frontend": "cd frontend && node node_modules/typescript/bin/tsc --project tsconfig.json && node node_modules/vite/bin/vite.js build"
