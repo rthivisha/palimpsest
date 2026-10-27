@@ -174,7 +174,7 @@ def verify_equivalence(
 
 ### 4.2 AST to Z3 BitVec Translation Rules
 All variables and integer constants are mapped into 64-bit bit-vectors (`z3.BitVec(name, 64)` and `z3.BitVecVal(val & 0xFFFFFFFFFFFFFFFF, 64)`).
-- `+` $\rightarrow$ `x + y` (Bit-vector addition with implicit modulo $2^{64}$)
+- `+` $\rightarrow$ `x + y` (Bit-vector addition with implicit 64-bit unsigned modulo wrapping)
 - `-` $\rightarrow$ `x - y`
 - `*` $\rightarrow$ `x * y`
 - `&` $\rightarrow$ `x & y`

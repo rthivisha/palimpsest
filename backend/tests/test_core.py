@@ -36,6 +36,7 @@ from backend.app.core.verifier import (
     verify_equivalence,
     STATUS_VERIFIED,
     STATUS_SAT,
+    STATUS_UNKNOWN,
     STATUS_INVALID,
 )
 
@@ -242,13 +243,72 @@ class TestZ3Verifier:
         assert wx < 16 and wy < 16
 
     def test_demo_witness_is_small(self):
-        """Asserts that the demo expression witness values are small (ULT(v, 16))."""
+        """Asserts that the demo expression witness values are small (ULT(v, 2) yields x=1, y=1)."""
         res = verify_equivalence("(x ^ y) + 2 * (x & y)", "x ^ y")
         assert res["status"] == STATUS_SAT
-        assert "x" in res["witness"] and "y" in res["witness"]
-        # Both variable values in the witness must be strictly < 16
-        for var_name, val in res["witness"].items():
-            assert 0 <= val < 16, f"Expected small witness for {var_name}, got {val}"
+        assert res["witness"] == {"x": 1, "y": 1}
+        assert res["expected"] == 2
+        assert res["actual"] == 0
+
+    def test_candidate_wrong_only_on_large_inputs(self):
+        """A candidate wrong only on large inputs returns SAT via fallback."""
+        # For x < 16, x >> 32 == 0, so x ^ (x >> 32) == x (bounded query is UNSAT).
+        # Fallback to unconstrained query must detect discrepancy when x >= 2^32 and return SAT.
+        orig = "x"
+        cand = "x ^ (x >> 32)"
+        res = verify_equivalence(orig, cand)
+        assert res["status"] == STATUS_SAT
+        assert res["witness"]["x"] >= 16
+        assert res["expected"] != res["actual"]
+
+    def test_bounded_unsat_never_yields_verified_status(self):
+        """Bounded UNSAT must never emit STATUS_VERIFIED."""
+        orig = "x"
+        cand = "x ^ (x >> 32)"
+        res = verify_equivalence(orig, cand)
+        assert res["status"] != STATUS_VERIFIED
+
+    def test_candidate_with_variable_not_in_original(self):
+        """Candidate containing a variable not present in original is handled cleanly."""
+        res = verify_equivalence("x + y", "x + z")
+        assert res["status"] == STATUS_SAT
+        assert "x" in res["witness"]
+        assert "y" in res["witness"]
+        assert "z" in res["witness"]
+
+    def test_unary_operators_and_identities(self):
+        """Tests unary bitwise inversion (~) and arithmetic negation (-)."""
+        # Double bitwise NOT
+        res_not = verify_equivalence("~(~x)", "x")
+        assert res_not["status"] == STATUS_VERIFIED
+
+        # Double negation
+        res_neg = verify_equivalence("-(-x)", "x")
+        assert res_neg["status"] == STATUS_VERIFIED
+
+        # Negation algebraic identity: -(x - y) == y - x
+        res_sub = verify_equivalence("-(x - y)", "y - x")
+        assert res_sub["status"] == STATUS_VERIFIED
+
+    def test_shifts_by_64_or_more(self):
+        """Tests that shift counts >= 64 are masked to 6 bits (0-63)."""
+        # x << 64 == x << 0 == x
+        assert verify_equivalence("x << 64", "x")["status"] == STATUS_VERIFIED
+
+        # x >> 64 == x >> 0 == x
+        assert verify_equivalence("x >> 64", "x")["status"] == STATUS_VERIFIED
+
+        # x << 65 == x << 1
+        assert verify_equivalence("x << 65", "x << 1")["status"] == STATUS_VERIFIED
+
+        # x >> 66 == x >> 2
+        assert verify_equivalence("x >> 66", "x >> 2")["status"] == STATUS_VERIFIED
+
+    def test_timeout_returns_unknown(self):
+        """Solver timeout returns STATUS_UNKNOWN gracefully."""
+        # A timeout of 0 ms forces an immediate timeout in Z3
+        res = verify_equivalence("x * y * z", "z * y * x", timeout_ms=0)
+        assert res["status"] in ("UNKNOWN", STATUS_UNKNOWN)
 
     def test_64bit_overflow_wrapping(self):
         """Verifies that 64-bit addition wraps cleanly to 0 without overflow error."""

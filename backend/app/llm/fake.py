@@ -6,7 +6,7 @@ and UI without requiring an active Ollama service, GPU, or model weights.
 
 Stateless behavior:
 - On initial turn (1 user prompt in context): proposes `x ^ y` (a near-miss guess).
-- On retry turn (Z3 failure witness in context): proposes `x + y` (the provably equivalent fix).
+- On retry turn (Z3 failure witness in context): proposes `x + y` (the verified fix).
 - Can also be initialized with custom sequence of guesses or an always-wrong candidate
   to verify loop termination on max iterations.
 """

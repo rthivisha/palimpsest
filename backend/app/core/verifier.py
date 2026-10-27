@@ -21,11 +21,21 @@ Two mathematical outcomes are possible:
 
 Witness Bounding Strategy:
 Training witnesses in the fine-tuning dataset are small integers (e.g. x=1, y=1).
-To prevent Z3 from emitting large arbitrary 64-bit numbers when small witnesses exist,
-`verify_equivalence` executes a two-phase check:
-- Phase 1: Try a bounded query with every variable constrained to `z3.ULT(v, 16)` inside push/pop.
-- Phase 2: If the bounded query returns UNSAT or UNKNOWN, pop the bounds and fall back to the
-           unconstrained query.
+To prevent Z3 from emitting large arbitrary numbers when small witnesses exist,
+`verify_equivalence` executes bounded queries in ascending order:
+- Phase 1: Try bounded query with `z3.ULT(v, 2)` (finds canonical x=1, y=1).
+- Phase 2: Try bounded query with `z3.ULT(v, 16)`.
+- Phase 3: Fall back to unconstrained query.
+
+CRITICAL INVARIANT:
+Bounded UNSAT must NEVER return verified status, because a candidate may be equivalent
+on small inputs but divergent on large inputs. Only the unconstrained solver check
+can emit `QF_BV_UNSAT_64BIT_VERIFIED`.
+
+Timeout Management:
+One shared timeout budget (`timeout_ms`) is strictly enforced across all phases,
+with small slices allocated to the bounded queries so total elapsed latency stays
+within the configured limit.
 """
 import ast
 import time
@@ -45,9 +55,6 @@ UINT64_MASK: int = 0xFFFFFFFFFFFFFFFF
 
 # Shift mask (x86-64 shifts by count mod 64)
 SHIFT_MASK: int = 63
-
-# Bounded witness upper bound (exclusive: 0 <= v < 16)
-WITNESS_UPPER_BOUND: int = 16
 
 # Status string constants matching the dataset generator and runtime contract
 STATUS_VERIFIED: str = "QF_BV_UNSAT_64BIT_VERIFIED"
@@ -117,7 +124,7 @@ def _ast_to_z3(node: ast.AST, var_map: Dict[str, z3.BitVecRef]) -> z3.BitVecRef:
         elif isinstance(node.op, ast.BitXor):
             return left_bv ^ right_bv
         elif isinstance(node.op, ast.LShift):
-            # Left shift: mask shift amount to 6 bits (0-63)
+            # Left shift: mask shift amount to 6 bits (0-63), matching x86-64 hardware semantics
             shift_amt = right_bv & z3.BitVecVal(SHIFT_MASK, BIT_WIDTH)
             return left_bv << shift_amt
         elif isinstance(node.op, ast.RShift):
@@ -139,28 +146,23 @@ def verify_equivalence(
     """Formally verifies whether original_expr and candidate_expr are equivalent.
 
     Performs a formal miter check using Z3 QF_BV (Quantifier-Free Bit-Vectors).
-    Uses a two-phase check:
-    1. Bounded check: restricts all variables to `ULT(v, 16)` inside push/pop to
-       prioritize small, interpretable counterexample witnesses matching training data.
-    2. Unconstrained check: if the bounded query is UNSAT, pops bounds to verify
-       full 64-bit equivalence.
+
+    Strategy:
+    1. Bounded checks: Tests bounds in order `ULT(v, 2)` then `ULT(v, 16)` inside push/pop
+       to prefer small witnesses (such as x=1, y=1) matching training data.
+    2. Shared timeout budget: Total solver duration across bounded and unconstrained queries
+       is strictly bounded by `timeout_ms`.
+    3. Unconstrained fallback: If bounded checks return UNSAT or UNKNOWN, pops bounds and
+       executes the unconstrained query. Bounded UNSAT never returns verified; only
+       unconstrained UNSAT yields `QF_BV_UNSAT_64BIT_VERIFIED`.
 
     Args:
         original_expr: The original obfuscated MBA expression string.
         candidate_expr: The model-proposed simplified expression string.
-        timeout_ms: Solver timeout in milliseconds (default: 3000ms).
+        timeout_ms: Total solver timeout budget in milliseconds (default: 3000ms).
 
     Returns:
-        A dictionary with the following schema:
-        {
-            "status": "QF_BV_UNSAT_64BIT_VERIFIED" | "SAT" | "UNKNOWN" | "INVALID",
-            "witness": {"x": 1, "y": 1},   # Disproving variable assignments (if SAT)
-            "expected": 2,                 # Ground truth evaluation at witness (if SAT)
-            "actual": 0,                   # Candidate evaluation at witness (if SAT)
-            "diff_bits": "00...0010",      # 64-character binary string of (expected ^ actual)
-            "latency_ms": 1.25,            # Verification duration in milliseconds
-            "error": "..."                 # Error message if status == "INVALID"
-        }
+        Dict containing status, witness, expected, actual, diff_bits, latency_ms.
     """
     start_time = time.perf_counter()
 
@@ -181,7 +183,7 @@ def verify_equivalence(
         }
 
     # 2. Variable Discovery & Shared Z3 Allocation
-    # All variables present across both expressions must share the exact same Z3 BitVec symbols.
+    # All variables across both expressions must share the exact same Z3 BitVec symbols.
     all_vars: Set[str] = set(extract_variables(orig_ast)) | set(extract_variables(cand_ast))
     var_map: Dict[str, z3.BitVecRef] = {
         var_name: z3.BitVec(var_name, BIT_WIDTH) for var_name in all_vars
@@ -205,81 +207,104 @@ def verify_equivalence(
 
     # 4. Construct SMT Miter: original != candidate
     solver = z3.Solver()
-    solver.set("timeout", timeout_ms)
     solver.add(z3_orig != z3_cand)
 
-    # 5. Two-phase verification:
-    # Phase 1: Bounded query for small counterexamples (v < 16) inside push/pop
-    solver.push()
-    for z3_var in var_map.values():
-        solver.add(z3.ULT(z3_var, WITNESS_UPPER_BOUND))
+    # 5. Shared Timeout Budget: Try bounded checks in ascending order: ULT(v, 2) then ULT(v, 16)
+    witness_bounds = [2, 16]
+    bounded_sat_found = False
+    chosen_model = None
 
-    check_res = solver.check()
-    is_bounded_sat = (check_res == z3.sat)
+    for bound in witness_bounds:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        remaining_ms = timeout_ms - elapsed_ms
+        if remaining_ms <= 0:
+            break
 
-    # Phase 2: If bounded query did not find a counterexample, fall back to unconstrained query
-    if not is_bounded_sat:
-        solver.pop()
+        # Allocate a small slice of the remaining budget for this bounded check
+        slice_ms = max(20, min(int(timeout_ms * 0.15), int(remaining_ms)))
+        solver.set("timeout", slice_ms)
+
+        solver.push()
+        for z3_var in var_map.values():
+            solver.add(z3.ULT(z3_var, bound))
+
         check_res = solver.check()
+        if check_res == z3.sat:
+            bounded_sat_found = True
+            chosen_model = solver.model()
+            solver.pop()
+            break
+        else:
+            solver.pop()
 
+    # 6. If no bounded counterexample was found, fall back to unconstrained query
+    if not bounded_sat_found:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+        remaining_ms = int(timeout_ms - elapsed_ms)
+        if remaining_ms <= 0:
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+            return {
+                "status": STATUS_UNKNOWN,
+                "witness": {},
+                "expected": None,
+                "actual": None,
+                "diff_bits": None,
+                "latency_ms": round(latency_ms, 3),
+                "error": "Z3 solver timeout reached within shared budget",
+            }
+
+        solver.set("timeout", max(1, remaining_ms))
+        unconstrained_res = solver.check()
+
+        if unconstrained_res == z3.unsat:
+            # Equivalence proven by Z3 (QF_BV, 64-bit)
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+            return {
+                "status": STATUS_VERIFIED,
+                "witness": {},
+                "expected": None,
+                "actual": None,
+                "diff_bits": None,
+                "latency_ms": round(latency_ms, 3),
+                "error": None,
+            }
+        elif unconstrained_res == z3.sat:
+            chosen_model = solver.model()
+        else:
+            # UNKNOWN (timeout or resource exhaustion)
+            latency_ms = (time.perf_counter() - start_time) * 1000.0
+            return {
+                "status": STATUS_UNKNOWN,
+                "witness": {},
+                "expected": None,
+                "actual": None,
+                "diff_bits": None,
+                "latency_ms": round(latency_ms, 3),
+                "error": "Z3 solver returned UNKNOWN (timeout or resource limit reached)",
+            }
+
+    # 7. Extract counterexample witness from the satisfying model
+    witness: Dict[str, int] = {}
+    for var_name, z3_var in sorted(var_map.items()):
+        evaluated = chosen_model.eval(z3_var, model_completion=True)
+        val = evaluated.as_long() if hasattr(evaluated, "as_long") else 0
+        witness[var_name] = val & UINT64_MASK
+
+    orig_eval = chosen_model.eval(z3_orig, model_completion=True)
+    cand_eval = chosen_model.eval(z3_cand, model_completion=True)
+
+    expected_val = (orig_eval.as_long() if hasattr(orig_eval, "as_long") else 0) & UINT64_MASK
+    actual_val = (cand_eval.as_long() if hasattr(cand_eval, "as_long") else 0) & UINT64_MASK
+
+    diff_bits = format(expected_val ^ actual_val, "064b")
     latency_ms = (time.perf_counter() - start_time) * 1000.0
 
-    # Case A: UNSAT -> Equivalence proven by Z3 (QF_BV, 64-bit)
-    if check_res == z3.unsat:
-        return {
-            "status": STATUS_VERIFIED,
-            "witness": {},
-            "expected": None,
-            "actual": None,
-            "diff_bits": None,
-            "latency_ms": round(latency_ms, 3),
-            "error": None,
-        }
-
-    # Case B: SAT -> Counterexample witness exists (either bounded or unconstrained)
-    elif check_res == z3.sat:
-        model = solver.model()
-        witness: Dict[str, int] = {}
-
-        # Extract concrete integer values for all variables
-        for var_name, z3_var in sorted(var_map.items()):
-            evaluated = model.eval(z3_var, model_completion=True)
-            val = evaluated.as_long() if hasattr(evaluated, "as_long") else 0
-            witness[var_name] = val & UINT64_MASK
-
-        # Evaluate expected (original) and actual (candidate) values under the model
-        orig_eval = model.eval(z3_orig, model_completion=True)
-        cand_eval = model.eval(z3_cand, model_completion=True)
-
-        expected_val = (orig_eval.as_long() if hasattr(orig_eval, "as_long") else 0) & UINT64_MASK
-        actual_val = (cand_eval.as_long() if hasattr(cand_eval, "as_long") else 0) & UINT64_MASK
-
-        # Calculate 64-bit binary diff string: bit i is '1' if expected and actual differ
-        diff_bits = format(expected_val ^ actual_val, "064b")
-
-        if is_bounded_sat:
-            solver.pop()
-
-        return {
-            "status": STATUS_SAT,
-            "witness": witness,
-            "expected": expected_val,
-            "actual": actual_val,
-            "diff_bits": diff_bits,
-            "latency_ms": round(latency_ms, 3),
-            "error": None,
-        }
-
-    # Case C: UNKNOWN (Timeout or solver limit reached)
-    else:
-        if is_bounded_sat:
-            solver.pop()
-        return {
-            "status": STATUS_UNKNOWN,
-            "witness": {},
-            "expected": None,
-            "actual": None,
-            "diff_bits": None,
-            "latency_ms": round(latency_ms, 3),
-            "error": "Z3 solver returned UNKNOWN (timeout or resource limit reached)",
-        }
+    return {
+        "status": STATUS_SAT,
+        "witness": witness,
+        "expected": expected_val,
+        "actual": actual_val,
+        "diff_bits": diff_bits,
+        "latency_ms": round(latency_ms, 3),
+        "error": None,
+    }
