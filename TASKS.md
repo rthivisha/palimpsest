@@ -139,4 +139,4 @@
 
 | Phase | Tag | Commit Hash | Summary |
 | :--- | :--- | :--- | :--- |
-| Phase 0 | `phase-0-plan` | Pending | Repository initialization, .gitignore, ARCHITECTURE.md, TASKS.md |
+| Phase 0 | `phase-0-plan` | `c43b1e6` | Repository initialization, .gitignore, ARCHITECTURE.md, TASKS.md |
