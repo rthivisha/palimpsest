@@ -391,17 +391,22 @@ class TelemetryDB:
         exclude_fake: bool = False,
         backend: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Calculates aggregate statistics over runs, optionally filtering by backend."""
+        """Calculates aggregate statistics over runs, filtering by validated backend using bound parameters."""
+        allowed_backends = {"fake", "ollama", "llamacpp"}
         try:
             self.sync()
             with self._get_read_conn() as conn:
                 where_clauses = []
                 params = []
                 if backend:
+                    backend_clean = backend.lower().strip()
+                    if backend_clean not in allowed_backends:
+                        raise ValueError(f"Invalid backend '{backend}'. Must be one of: {sorted(allowed_backends)}")
                     where_clauses.append("LOWER(backend) = ?")
-                    params.append(backend.lower().strip())
+                    params.append(backend_clean)
                 elif exclude_fake:
-                    where_clauses.append("LOWER(backend) != 'fake'")
+                    where_clauses.append("LOWER(backend) != ?")
+                    params.append("fake")
 
                 where_str = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
                 cur = conn.execute(f"""
@@ -430,6 +435,7 @@ class TelemetryDB:
                         "rejected_runs": 0,
                         "cancelled_runs": 0,
                         "error_runs": 0,
+                        "proven_equivalent_rate_pct": 0.0,
                         "success_rate_pct": 0.0,
                         "strictly_simpler_rate_pct": 0.0,
                         "simpler_rate_pct": 0.0,
@@ -450,8 +456,8 @@ class TelemetryDB:
                 completed = verified + failed_exhausted
                 failed_total = total - verified
 
-                # Success rate computed over completed runs only
-                success_rate = round((verified / completed) * 100, 2) if completed > 0 else 0.0
+                # Proven equivalent rate (verified + verified-not-simpler) over completed runs only
+                proven_equivalent_rate = round((verified / completed) * 100, 2) if completed > 0 else 0.0
                 strictly_simpler_rate = round((strictly_simpler / verified) * 100, 2) if verified > 0 else 0.0
                 simpler_rate = strictly_simpler_rate
                 avg_comp = round(row["avg_compression"] or 0.0, 2)
@@ -468,7 +474,8 @@ class TelemetryDB:
                     "rejected_runs": rejected,
                     "cancelled_runs": cancelled,
                     "error_runs": error,
-                    "success_rate_pct": success_rate,
+                    "proven_equivalent_rate_pct": proven_equivalent_rate,
+                    "success_rate_pct": proven_equivalent_rate,
                     "strictly_simpler_rate_pct": strictly_simpler_rate,
                     "simpler_rate_pct": simpler_rate,
                     "avg_compression_pct": avg_comp,

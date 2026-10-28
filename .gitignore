@@ -76,3 +76,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Scratch Files
+scratch/
+scratch

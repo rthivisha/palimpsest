@@ -20,16 +20,24 @@ console.log('  - Frontend:    http://127.0.0.1:5173 (strictly bound to IPv4 127.
 console.log('  - Backend API: http://127.0.0.1:8000 (strictly bound to IPv4 127.0.0.1)');
 console.log('======================================================================');
 
+const pythonBin =
+  process.platform === 'win32'
+    ? path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe')
+    : path.join(__dirname, '..', '.venv', 'bin', 'python');
+
+const backendCmd = `"${pythonBin}" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000`;
+const frontendCmd = 'cd frontend && node node_modules/vite/bin/vite.js';
+
 const { result, commands } = concurrently(
   [
     {
-      command: 'npm run start:backend',
+      command: backendCmd,
       name: 'backend',
       prefixColor: 'blue',
       env: extraEnv,
     },
     {
-      command: 'npm run start:frontend',
+      command: frontendCmd,
       name: 'frontend',
       prefixColor: 'cyan',
       env: extraEnv,
@@ -54,39 +62,32 @@ commands.forEach((cmd) => {
   });
 });
 
-process.on('SIGINT', () => {
-  console.log('\n[PALIMPSEST START] Received Ctrl+C (SIGINT). Stopping both servers cleanly...');
+let isShuttingDown = false;
+const handleShutdown = (signalName) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n[PALIMPSEST START] Received ${signalName}. Gracefully stopping servers...`);
   commands.forEach((c) => {
     try {
       c.kill();
     } catch (_) {}
   });
-  process.exit(0);
-});
+  // Fallback timeout to ensure process termination if a child hangs
+  setTimeout(() => {
+    process.exit(0);
+  }, 4000);
+};
 
-process.on('SIGBREAK', () => {
-  console.log('\n[PALIMPSEST START] Received Ctrl+Break / SIGBREAK. Stopping both servers cleanly...');
-  commands.forEach((c) => {
-    try {
-      c.kill();
-    } catch (_) {}
-  });
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('\n[PALIMPSEST START] Received SIGTERM. Stopping both servers cleanly...');
-  commands.forEach((c) => {
-    try {
-      c.kill();
-    } catch (_) {}
-  });
-  process.exit(0);
-});
+process.on('SIGINT', () => handleShutdown('Ctrl+C (SIGINT)'));
+process.on('SIGBREAK', () => handleShutdown('Ctrl+Break (SIGBREAK)'));
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 
 result.then(
   () => process.exit(0),
   (err) => {
+    if (isShuttingDown) {
+      process.exit(0);
+    }
     if (Array.isArray(err)) {
       for (const e of err) {
         if (!e.killed && e.exitCode !== 0) {

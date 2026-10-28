@@ -103,6 +103,7 @@ export interface StatsResponse {
   rejected_runs?: number;
   cancelled_runs?: number;
   error_runs?: number;
+  proven_equivalent_rate_pct?: number;
   success_rate_pct: number;
   strictly_simpler_rate_pct?: number;
   simpler_rate_pct?: number;

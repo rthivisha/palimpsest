@@ -254,7 +254,10 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
             </span>
             <ExplainTooltip topic="cegis" explainMode={explainMode} inline />
           </div>
-          <p className="text-xs text-slate-300 mt-0.5 font-mono truncate max-w-3xl">
+          <p
+            className="text-xs text-slate-300 mt-0.5 font-mono line-clamp-2 break-words max-w-3xl"
+            title={cleanReason}
+          >
             {truncatedReason}
           </p>
         </div>

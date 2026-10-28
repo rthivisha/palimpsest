@@ -1,12 +1,14 @@
 """Route handlers for system health, aggregate statistics, and MBA examples."""
 import z3
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from backend.app.config import settings
 from backend.app.telemetry.db import telemetry_db
 
 router = APIRouter()
+
+ALLOWED_STATS_BACKENDS = {"fake", "ollama", "llamacpp"}
 
 
 CURATED_EXAMPLES: List[Dict[str, Any]] = [
@@ -160,6 +162,14 @@ async def get_stats(
     backend: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Returns aggregate synthesis statistics over past de-obfuscation runs."""
+    if backend is not None:
+        clean = backend.lower().strip()
+        if clean not in ALLOWED_STATS_BACKENDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backend '{backend}'. Must be one of: {sorted(ALLOWED_STATS_BACKENDS)}",
+            )
+        backend = clean
     return telemetry_db.get_stats(exclude_fake=exclude_fake, backend=backend)
 
 

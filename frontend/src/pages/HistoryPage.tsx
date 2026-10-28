@@ -83,7 +83,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
 
   // Prepare chart data: 2. Outcome breakdown across completed and uncompleted runs
   const successRatioData = [
-    { name: 'Verified', count: stats?.verified_runs || 0 },
+    { name: 'Proven', count: stats?.verified_runs || 0 },
     { name: 'Exhausted', count: stats?.failed_exhausted_runs || 0 },
     { name: 'Rejected', count: stats?.rejected_runs || 0 },
     { name: 'Cancelled', count: stats?.cancelled_runs || 0 },
@@ -148,7 +148,9 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
             <div className="text-xs font-medium text-slate-400 font-mono">PROVEN EQUIVALENT</div>
             <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
               {stats.verified_runs}{' '}
-              <span className="text-xs font-normal text-slate-400">({stats.success_rate_pct}%)</span>
+              <span className="text-xs font-normal text-slate-400">
+                ({stats.proven_equivalent_rate_pct ?? stats.success_rate_pct}%)
+              </span>
             </div>
             <div className="text-[11px] text-slate-500 mt-1">QF_BV proofs (UNSAT)</div>
           </div>
@@ -210,11 +212,11 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
           </div>
         </div>
 
-        {/* Chart 2: Success Rate (Verification Ratio) */}
+        {/* Chart 2: Proven Equivalence & Outcome Breakdown */}
         <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4 shadow-lg">
           <div className="text-xs font-semibold text-slate-300 font-mono mb-3 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span>SUCCESS RATE RATIO</span>
+            <span>PROVEN EQUIVALENCE & OUTCOMES</span>
           </div>
           <div className="h-40 w-full">
             <ResponsiveContainer width="100%" height="100%">

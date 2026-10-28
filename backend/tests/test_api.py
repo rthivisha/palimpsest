@@ -1006,6 +1006,7 @@ class TestHostHeaderAndREST:
         assert stats["cancelled_runs"] == 0
         assert stats["error_runs"] == 0
         assert stats["failed_runs"] == 1
+        assert stats["proven_equivalent_rate_pct"] == 75.0
         assert stats["success_rate_pct"] == 75.0
         assert stats["simpler_rate_pct"] == 66.67
         assert stats["strictly_simpler_rate_pct"] == 66.67
@@ -1019,6 +1020,7 @@ class TestHostHeaderAndREST:
         assert stats_ollama["verified_runs"] == 1
         assert stats_ollama["strictly_simpler_runs"] == 1
         assert stats_ollama["failed_exhausted_runs"] == 0
+        assert stats_ollama["proven_equivalent_rate_pct"] == 100.0
         assert stats_ollama["success_rate_pct"] == 100.0
 
         # Filter by exclude_fake=true
@@ -1030,7 +1032,13 @@ class TestHostHeaderAndREST:
         assert stats_nofake["verified_runs"] == 1
         assert stats_nofake["strictly_simpler_runs"] == 1
         assert stats_nofake["failed_exhausted_runs"] == 0
+        assert stats_nofake["proven_equivalent_rate_pct"] == 100.0
         assert stats_nofake["success_rate_pct"] == 100.0
+
+        # Disallowed backend returns HTTP 400
+        res_bad = client.get("/api/stats?backend=malicious_backend")
+        assert res_bad.status_code == 400
+        assert "Invalid backend" in res_bad.json()["detail"]
 
 
 # ==============================================================================
@@ -1211,7 +1219,8 @@ class TestDatabasePragmasAndIndexes:
         assert stats["cancelled_runs"] == 1
         assert stats["error_runs"] == 1
         assert stats["failed_runs"] == 4
-        # Success rate is computed over completed runs only (2 verified / 3 completed = 66.67%)
+        # Proven equivalent rate is computed over completed runs only (2 verified / 3 completed = 66.67%)
+        assert stats["proven_equivalent_rate_pct"] == 66.67
         assert stats["success_rate_pct"] == 66.67
         # Simpler rate strictly excludes idempotent / not simpler rows (1 out of 2 = 50.0%)
         assert stats["simpler_rate_pct"] == 50.0

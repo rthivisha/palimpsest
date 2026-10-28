@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { Attempt, FinalPayload, RunDetail, RunStartedPayload } from '../types';
 import { deriveReplayFinalResult } from '../utils/replay';
+import { fetchWithInitialRetry } from '../utils/fetchWithRetry';
 
 interface UseRunStreamReturn {
   isRunning: boolean;
@@ -116,8 +117,10 @@ export function useRunStream(): UseRunStreamReturn {
 
     let response: Response;
     try {
-      try {
-        response = await fetch('/api/run', {
+      // Connect to API with at most 1 retry ONLY before any response arrives
+      response = await fetchWithInitialRetry(
+        '/api/run',
+        {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -125,22 +128,9 @@ export function useRunStream(): UseRunStreamReturn {
           },
           body: jsonBody({ expression: expr, max_iterations: maxIters }),
           signal: abortController.signal,
-        });
-      } catch (firstErr: any) {
-        if (firstErr.name === 'AbortError') throw firstErr;
-        // Network-level failure: perform 1 retry after 500ms
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        if (abortController.signal.aborted) throw firstErr;
-        response = await fetch('/api/run', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-          },
-          body: jsonBody({ expression: expr, max_iterations: maxIters }),
-          signal: abortController.signal,
-        });
-      }
+        },
+        500
+      );
 
       // 1. Handle HTTP 429: "previous run still finishing" with Retry-After header
       if (response.status === 429) {
