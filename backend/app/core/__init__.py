@@ -8,6 +8,7 @@ Contains:
 from backend.app.core.safety import validate_ast, is_safe_ast, SafetyViolationError
 from backend.app.core.ast_utils import count_nodes, extract_variables, get_ast_depth
 from backend.app.core.verifier import verify_equivalence
+from backend.app.core.outcomes import RunOutcome, EvalOutcome, determine_verified_outcome
 
 __all__ = [
     "validate_ast",
@@ -17,4 +18,7 @@ __all__ = [
     "extract_variables",
     "get_ast_depth",
     "verify_equivalence",
+    "RunOutcome",
+    "EvalOutcome",
+    "determine_verified_outcome",
 ]

@@ -306,9 +306,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
               </thead>
               <tbody className="divide-y divide-cyber-border/60">
                 {history.map((run) => {
-                  const isVer = run.final_status === 'VERIFIED_EQUIVALENT';
-                  const isFail = run.final_status === 'FAILED';
-                  const isUnsafe = run.final_status === 'REJECTED_UNSAFE';
+                  const isVer = run.final_status === 'verified' || run.final_status === 'VERIFIED_EQUIVALENT';
+                  const isNotSimpler = run.final_status === 'verified-not-simpler';
+                  const isFail = run.final_status === 'failed-exhausted' || run.final_status === 'FAILED';
+                  const isUnsafe = run.final_status === 'rejected-unsafe' || run.final_status === 'depth-rejected' || run.final_status === 'REJECTED_UNSAFE';
+                  const isTimeout = run.final_status === 'unknown-timeout';
+                  const isInvalid = run.final_status === 'invalid';
 
                   return (
                     <tr key={run.run_id} className="hover:bg-slate-900/40 transition-colors">
@@ -333,12 +336,24 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 border border-emerald-500/40 text-emerald-300">
                             PROVEN
                           </span>
+                        ) : isNotSimpler ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 border border-amber-500/40 text-amber-300">
+                            NOT SIMPLER
+                          </span>
                         ) : isFail ? (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300">
                             FAILED
                           </span>
+                        ) : isTimeout ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-950/60 border border-orange-500/40 text-orange-300">
+                            TIMEOUT
+                          </span>
+                        ) : isInvalid ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 border border-purple-500/40 text-purple-300">
+                            INVALID
+                          </span>
                         ) : isUnsafe ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 border border-amber-500/40 text-amber-300">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300">
                             UNSAFE
                           </span>
                         ) : (

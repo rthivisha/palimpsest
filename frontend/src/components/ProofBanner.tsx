@@ -18,8 +18,9 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
 
   if (!finalResult) return null;
 
-  const isVerified = finalResult.status === 'VERIFIED_EQUIVALENT';
-  const isUnsafe = finalResult.status === 'REJECTED_UNSAFE';
+  const isVerified = finalResult.status === 'verified' || finalResult.status === 'VERIFIED_EQUIVALENT';
+  const isNotSimpler = finalResult.status === 'verified-not-simpler';
+  const isUnsafe = finalResult.status === 'rejected-unsafe' || finalResult.status === 'depth-rejected' || finalResult.status === 'REJECTED_UNSAFE';
   const isCancelled = finalResult.status === 'CANCELLED';
 
   const handleCopy = () => {
@@ -29,6 +30,86 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  if (isNotSimpler) {
+    return (
+      <div className="bg-amber-950/30 border border-amber-500/60 rounded-xl p-5 shadow-[0_0_20px_rgba(245,158,11,0.15)] space-y-4">
+        {/* Banner Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-900/50 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-bold font-mono text-amber-300 tracking-wide flex items-center gap-1.5">
+                <span>Verified equivalent, but not simpler</span>
+                <ExplainTooltip topic="z3" explainMode={explainMode} inline />
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes}) is not smaller than original ({finalResult.obf_nodes}).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 text-xs font-mono">
+            {finalResult.backend && (
+              <div className="px-2.5 py-1 rounded bg-slate-900/90 border border-slate-700 text-cyan-300 font-mono text-xs">
+                <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
+                {finalResult.model_name && <span className="text-slate-400"> · {finalResult.model_name}</span>}
+              </div>
+            )}
+            <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-800 text-amber-300">
+              <span className="text-slate-400">Total: </span>
+              <span className="font-bold">{finalResult.total_ms} ms</span>
+            </div>
+            <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-800 text-amber-300">
+              <span className="text-slate-400">Attempts: </span>
+              <span className="font-bold">{finalResult.attempts}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Side-by-side Expression Transformation */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="p-3.5 rounded-lg bg-cyber-bg border border-cyber-border">
+            <div className="text-[11px] font-mono text-slate-400 mb-1 flex items-center justify-between">
+              <span>ORIGINAL INPUT</span>
+              <span className="text-slate-500 font-bold">{finalResult.obf_nodes} AST nodes</span>
+            </div>
+            <div className="font-mono text-sm text-slate-300 break-all bg-slate-950/60 p-2.5 rounded border border-slate-900">
+              {originalExpr}
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-lg bg-amber-950/20 border border-amber-500/40">
+            <div className="text-[11px] font-mono text-amber-400 mb-1 flex items-center justify-between">
+              <span className="font-bold flex items-center gap-1">
+                <span>EQUIVALENT CANDIDATE</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-amber-300 font-bold">{finalResult.final_nodes} nodes</span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-bold">
+                  {finalResult.compression_pct}%
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 font-mono text-base font-bold text-amber-200 bg-slate-950/80 p-2.5 rounded border border-amber-900/50">
+              <span className="break-all">{finalResult.final_expr}</span>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="shrink-0 p-1.5 rounded bg-amber-900/40 hover:bg-amber-900/80 text-amber-300 transition-colors"
+                title="Copy candidate expression"
+              >
+                {copied ? <Check className="w-4 h-4 text-amber-400" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isVerified) {
     return (

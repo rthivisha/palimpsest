@@ -112,7 +112,10 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
   const isProposeActive = activeNode === 'propose';
   const isVerifyActive = activeNode === 'verify';
   const isRouterActive = isRunning && activeNode === 'router';
-  const isSuccessFinal = finalResult?.status === 'VERIFIED_EQUIVALENT';
+  const isSuccessFinal =
+    finalResult?.status === 'verified' ||
+    finalResult?.status === 'verified-not-simpler' ||
+    finalResult?.status === 'VERIFIED_EQUIVALENT';
   const isFailFinal =
     finalResult?.status === 'FAILED' ||
     finalResult?.status === 'REJECTED_UNSAFE' ||

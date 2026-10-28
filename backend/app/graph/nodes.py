@@ -12,7 +12,14 @@ from typing import Any, Callable, Dict, Optional
 from backend.app.config import settings
 from backend.app.core.safety import is_safe_ast
 from backend.app.core.ast_utils import count_nodes
-from backend.app.core.verifier import verify_equivalence, STATUS_VERIFIED, STATUS_SAT
+from backend.app.core.outcomes import RunOutcome, determine_verified_outcome
+from backend.app.core.verifier import (
+    verify_equivalence,
+    STATUS_VERIFIED,
+    STATUS_SAT,
+    STATUS_UNKNOWN,
+    STATUS_INVALID,
+)
 from backend.app.graph.state import PalimpsestState, AttemptRecord
 from backend.app.llm.base import BaseLLMBackend
 from backend.app.llm.prompts import (
@@ -32,11 +39,12 @@ def parse_ast_node(state: PalimpsestState) -> Dict[str, Any]:
     safe, err = is_safe_ast(expr)
 
     if not safe:
+        outcome = RunOutcome.DEPTH_REJECTED if "depth" in str(err).lower() else RunOutcome.REJECTED_UNSAFE
         return {
             "obf_nodes": 0,
             "iteration": 0,
             "history": [],
-            "final_status": "REJECTED_UNSAFE",
+            "final_status": outcome.value,
             "error_message": f"Security Gate Rejection: {err}",
             "temperature": 0.2,
         }
@@ -168,7 +176,7 @@ def finalize_success_node(state: PalimpsestState) -> Dict[str, Any]:
     """Node 4: Success termination.
 
     Triggered when Z3 formally proves equivalence (QF_BV_UNSAT_64BIT_VERIFIED).
-    Computes final AST reduction percentage.
+    Computes final AST reduction percentage and determines whether the candidate is simpler.
     """
     final_expr = state.get("current_candidate") or ""
     orig_nodes = state.get("obf_nodes", 1)
@@ -176,13 +184,15 @@ def finalize_success_node(state: PalimpsestState) -> Dict[str, Any]:
 
     # Compression = 1 - final_nodes / obf_nodes
     compression_pct = round((1.0 - (final_nodes / max(orig_nodes, 1))) * 100.0, 2)
+    is_idempotent = bool(state.get("is_idempotent", False))
+    outcome = determine_verified_outcome(orig_nodes, final_nodes, is_idempotent)
 
     return {
-        "final_status": "VERIFIED_EQUIVALENT",
+        "final_status": outcome.value,
         "final_expr": final_expr,
         "final_nodes": final_nodes,
         "compression_pct": compression_pct,
-        "error_message": None,
+        "error_message": None if outcome == RunOutcome.VERIFIED else "Verified equivalent, but not simpler",
     }
 
 
@@ -192,9 +202,18 @@ def finalize_fail_node(state: PalimpsestState) -> Dict[str, Any]:
     Triggered when retry limit is exhausted without mathematical proof.
     Honest reporting: zero unverified answers accepted.
     """
+    history = state.get("history", [])
+    last_status = history[-1].get("status") if history else "SAT"
+    if last_status == "UNKNOWN":
+        outcome = RunOutcome.UNKNOWN_TIMEOUT
+    elif last_status == "INVALID":
+        outcome = RunOutcome.INVALID
+    else:
+        outcome = RunOutcome.FAILED_EXHAUSTED
+
     max_iter = state.get("max_iterations", settings.MAX_ITERATIONS)
     return {
-        "final_status": "FAILED",
+        "final_status": outcome.value,
         "final_expr": None,
         "final_nodes": None,
         "compression_pct": 0.0,

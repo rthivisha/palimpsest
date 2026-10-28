@@ -2,11 +2,12 @@
 
 LABEL: DIAGNOSTIC, NOT A BENCHMARK.
 This script executes the demo MBA expression (x ^ y) + 2 * (x & y) across 20 trials
-with max_iterations=1 and a fixed seed, comparing:
-1. Empty SYSTEM_PROMPT ("") - Palimpsest fine-tuning default.
-2. Qwen default SYSTEM_PROMPT ("You are a helpful assistant.").
+with max_iterations=1 and fixed seeds (seed = 42 + i), comparing:
+1. Empty SYSTEM_PROMPT ("").
+2. Qwen2.5 default SYSTEM_PROMPT ("You are Qwen, created by Alibaba Cloud. You are a helpful assistant.").
 
-Reports attempt-1 verified counts. No synthetic numbers are generated.
+Reports attempt-1 verified counts and prints the exact seed for each trial.
+No synthetic numbers are generated.
 """
 import argparse
 import os
@@ -26,7 +27,7 @@ from backend.app.llm.prompts import build_messages, extract_candidate
 
 DEMO_EXPRESSION = "(x ^ y) + 2 * (x & y)"
 CANONICAL_TARGET = "x + y"
-QWEN_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+QWEN_DEFAULT_SYSTEM_PROMPT = "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
 
 
 def run_trials_for_condition(
@@ -34,13 +35,12 @@ def run_trials_for_condition(
     expression: str,
     system_prompt: str,
     trials: int,
-    seed: int,
+    base_seed: int,
 ) -> int:
     """Runs N trials under a given system prompt condition, counting attempt-1 verifications."""
     verified_count = 0
     for i in range(trials):
-        # Derive deterministic seed per trial
-        trial_seed = seed + i
+        trial_seed = base_seed + i
         messages = build_messages(expression, history=[], system_prompt=system_prompt)
         try:
             raw_output = backend.generate(
@@ -54,11 +54,16 @@ def run_trials_for_condition(
 
         candidate = extract_candidate(raw_output)
         if not candidate:
+            print(f"  Trial {i+1:02d} (seed={trial_seed}): [no candidate extracted] -> INVALID")
             continue
 
         verif = verify_equivalence(expression, candidate)
-        if verif["status"] == STATUS_VERIFIED:
+        status = verif["status"]
+        if status == STATUS_VERIFIED:
             verified_count += 1
+            print(f"  Trial {i+1:02d} (seed={trial_seed}): candidate={repr(candidate)} -> VERIFIED")
+        else:
+            print(f"  Trial {i+1:02d} (seed={trial_seed}): candidate={repr(candidate)} -> {status}")
 
     return verified_count
 
@@ -85,7 +90,7 @@ def main():
         "-s",
         type=int,
         default=42,
-        help="Fixed seed for reproducibility (default: 42)",
+        help="Base seed for reproducibility (default: 42, each trial uses 42 + i)",
     )
     parser.add_argument(
         "--allow-fake",
@@ -121,30 +126,31 @@ def main():
     print(f"Backend:         {backend_name}")
     print(f"Trials:          {args.trials}")
     print(f"Max Iterations:  1 (single-turn attempt-1 verification only)")
-    print(f"Fixed Seed:      {args.seed}")
+    print(f"Base Seed:       {args.seed}")
+    print(f"Trial Seeds:     {[args.seed + i for i in range(args.trials)]}")
     if isinstance(backend, FakeLLMBackend):
         print("WARNING:         Running with FakeLLMBackend (scripted responses, not a real SLM)")
     print("=" * 80)
 
     try:
-        # Condition 1: Empty System Prompt (Palimpsest Default)
-        print("Running Condition 1: Empty System Prompt (\"\")...")
+        # Condition 1: Empty System Prompt
+        print("\nRunning Condition 1: Empty System Prompt (\"\")...")
         c1_verified = run_trials_for_condition(
             backend=backend,
             expression=DEMO_EXPRESSION,
             system_prompt="",
             trials=args.trials,
-            seed=args.seed,
+            base_seed=args.seed,
         )
 
-        # Condition 2: Qwen Default System Prompt
-        print("Running Condition 2: Qwen Default System Prompt (\"You are a helpful assistant.\")...")
+        # Condition 2: Qwen2.5 Default System Prompt
+        print(f"\nRunning Condition 2: Qwen2.5 Default System Prompt ({repr(QWEN_DEFAULT_SYSTEM_PROMPT)})...")
         c2_verified = run_trials_for_condition(
             backend=backend,
             expression=DEMO_EXPRESSION,
             system_prompt=QWEN_DEFAULT_SYSTEM_PROMPT,
             trials=args.trials,
-            seed=args.seed,
+            base_seed=args.seed,
         )
     except LLMBackendError as exc:
         print(f"\nDIAGNOSTIC ABORTED: {exc}", file=sys.stderr)
@@ -157,9 +163,9 @@ def main():
     print("DIAGNOSTIC RESULTS SUMMARY (Single-Turn Attempt-1 Verification)")
     print("=" * 80)
     print(f"Condition 1 [Empty System Prompt]:          {c1_verified:>2}/{args.trials} verified ({c1_pct:>5.1f}%)")
-    print(f"Condition 2 [Qwen Default System Prompt]:   {c2_verified:>2}/{args.trials} verified ({c2_pct:>5.1f}%)")
+    print(f"Condition 2 [Qwen2.5 Default System Prompt]: {c2_verified:>2}/{args.trials} verified ({c2_pct:>5.1f}%)")
     print("=" * 80)
-    print("Note: This diagnostic script verifies single-turn behavior on a single MBA identity.")
+    print("Note: This diagnostic script tests single-turn candidate verification across 20 trials with seed 42+i.")
     print("It is explicitly labelled 'diagnostic, not a benchmark' and must not be cited as such.")
     print("=" * 80)
 

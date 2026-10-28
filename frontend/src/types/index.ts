@@ -3,14 +3,22 @@
  * Matches frozen API payloads and database schema contracts.
  */
 
-export type RunStatus =
-  | 'IDLE'
-  | 'RUNNING'
+export type RunOutcome =
+  | 'verified'
+  | 'verified-not-simpler'
+  | 'failed-exhausted'
+  | 'unknown-timeout'
+  | 'invalid'
+  | 'rejected-unsafe'
+  | 'depth-rejected'
+  | 'unconvertible'
   | 'VERIFIED_EQUIVALENT'
   | 'FAILED'
   | 'REJECTED_UNSAFE'
   | 'CANCELLED'
   | 'ERROR';
+
+export type RunStatus = RunOutcome | 'IDLE' | 'RUNNING';
 
 export type VerificationStatus =
   | 'QF_BV_UNSAT_64BIT_VERIFIED'

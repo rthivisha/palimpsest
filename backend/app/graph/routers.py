@@ -8,13 +8,19 @@ Decides the control flow after:
 from langgraph.graph import END
 
 from backend.app.config import settings
+from backend.app.core.outcomes import RunOutcome
 from backend.app.core.verifier import STATUS_VERIFIED
 from backend.app.graph.state import PalimpsestState
 
 
 def route_after_parse(state: PalimpsestState) -> str:
     """Routes after parse_ast node: abort if input violates security gate."""
-    if state.get("final_status") == "REJECTED_UNSAFE":
+    status = state.get("final_status")
+    if status in (
+        RunOutcome.REJECTED_UNSAFE.value,
+        RunOutcome.DEPTH_REJECTED.value,
+        "REJECTED_UNSAFE",
+    ):
         return END
     return "propose"
 

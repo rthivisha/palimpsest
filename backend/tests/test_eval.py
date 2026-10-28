@@ -3,6 +3,7 @@ import os
 import tempfile
 import pytest
 
+from backend.app.core.outcomes import RunOutcome, EvalOutcome, determine_verified_outcome
 from backend.eval.harness import EvalConfig, EvalHarness, compute_wilson_interval, compute_percentiles
 from backend.app.llm.fake import FakeLLMBackend
 
@@ -154,5 +155,43 @@ class TestEvalHarness:
         summary = harness.run()
 
         assert summary["total_evaluated"] == 7
-        assert "SUCCESS_PROVEN" in summary["outcomes"]
+        assert "verified" in summary["outcomes"]
+
+
+class TestOutcomeEnumAndSimplerRule:
+    """Verifies strict definition of the 8-outcome enum and simpler-than-original rule."""
+
+    def test_outcome_enum_exact_members_and_values(self):
+        """All 8 outcome enum values strictly adhere to the specification."""
+        expected = {
+            "VERIFIED": "verified",
+            "VERIFIED_NOT_SIMPLER": "verified-not-simpler",
+            "FAILED_EXHAUSTED": "failed-exhausted",
+            "UNKNOWN_TIMEOUT": "unknown-timeout",
+            "INVALID": "invalid",
+            "REJECTED_UNSAFE": "rejected-unsafe",
+            "DEPTH_REJECTED": "depth-rejected",
+            "UNCONVERTIBLE": "unconvertible",
+        }
+        for member_name, expected_val in expected.items():
+            assert getattr(RunOutcome, member_name).value == expected_val
+            assert getattr(EvalOutcome, member_name).value == expected_val
+
+    def test_determine_verified_outcome_standard_rows(self):
+        """Standard rows require candidate node count to be strictly less than original."""
+        # 9 nodes original vs 3 nodes candidate -> verified
+        assert determine_verified_outcome(obf_nodes=9, cand_nodes=3, is_idempotent=False) == RunOutcome.VERIFIED
+        # 9 nodes original vs 9 nodes candidate -> verified-not-simpler
+        assert determine_verified_outcome(obf_nodes=9, cand_nodes=9, is_idempotent=False) == RunOutcome.VERIFIED_NOT_SIMPLER
+        # 9 nodes original vs 11 nodes candidate -> verified-not-simpler
+        assert determine_verified_outcome(obf_nodes=9, cand_nodes=11, is_idempotent=False) == RunOutcome.VERIFIED_NOT_SIMPLER
+
+    def test_determine_verified_outcome_idempotent_rows(self):
+        """Idempotent rows permit candidate node count to be less than or equal to original."""
+        # 3 nodes original vs 3 nodes candidate (idempotent) -> verified
+        assert determine_verified_outcome(obf_nodes=3, cand_nodes=3, is_idempotent=True) == RunOutcome.VERIFIED
+        # 3 nodes original vs 1 node candidate (idempotent) -> verified
+        assert determine_verified_outcome(obf_nodes=3, cand_nodes=1, is_idempotent=True) == RunOutcome.VERIFIED
+        # 3 nodes original vs 5 nodes candidate (idempotent) -> verified-not-simpler
+        assert determine_verified_outcome(obf_nodes=3, cand_nodes=5, is_idempotent=True) == RunOutcome.VERIFIED_NOT_SIMPLER
 

@@ -15,6 +15,7 @@ from starlette.background import BackgroundTask
 
 from backend.app.config import settings
 from backend.app.core.ast_utils import count_nodes
+from backend.app.core.outcomes import RunOutcome, determine_verified_outcome
 from backend.app.core.safety import is_safe_ast
 from backend.app.core.verifier import (
     STATUS_INVALID,
@@ -92,8 +93,9 @@ def run_synthesis_worker(
 
         if not safe:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            outcome = RunOutcome.DEPTH_REJECTED if "depth" in str(err_msg).lower() else RunOutcome.REJECTED_UNSAFE
             dispatch("final", {
-                "status": "REJECTED_UNSAFE",
+                "status": outcome.value,
                 "final_expr": None,
                 "obf_nodes": 0,
                 "final_nodes": None,
@@ -106,7 +108,7 @@ def run_synthesis_worker(
             })
             telemetry_db.update_run({
                 "run_id": run_id,
-                "final_status": "REJECTED_UNSAFE",
+                "final_status": outcome.value,
                 "total_ms": total_ms,
                 "attempts": 0,
             })
@@ -223,25 +225,27 @@ def run_synthesis_worker(
                 # --- Finalize Success ---
                 dispatch("node_started", {"node": "finalize_success"})
                 cand_nodes = count_nodes(candidate or "")
-                compression_pct = round((1.0 - (cand_nodes / obf_nodes)) * 100, 2)
+                compression_pct = round((1.0 - (cand_nodes / max(obf_nodes, 1))) * 100, 2)
                 total_ms = round((time.perf_counter() - start_time) * 1000, 2)
                 dispatch("node_finished", {"node": "finalize_success"})
 
+                outcome = determine_verified_outcome(obf_nodes, cand_nodes, is_idempotent=False)
+
                 dispatch("final", {
-                    "status": "VERIFIED_EQUIVALENT",
+                    "status": outcome.value,
                     "final_expr": candidate,
                     "obf_nodes": obf_nodes,
                     "final_nodes": cand_nodes,
                     "compression_pct": compression_pct,
                     "total_ms": total_ms,
                     "attempts": iteration,
-                    "reason": None,
+                    "reason": None if outcome == RunOutcome.VERIFIED else "Verified equivalent, but not simpler",
                     "backend": backend_name,
                     "model_name": model_name,
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
-                    "final_status": "VERIFIED_EQUIVALENT",
+                    "final_status": outcome.value,
                     "final_expr": candidate,
                     "compression_pct": compression_pct,
                     "attempts": iteration,
@@ -270,21 +274,32 @@ def run_synthesis_worker(
                 total_ms = round((time.perf_counter() - start_time) * 1000, 2)
                 dispatch("node_finished", {"node": "finalize_fail"})
 
+                last_status = verif.get("status", "SAT")
+                if last_status == "UNKNOWN":
+                    outcome = RunOutcome.UNKNOWN_TIMEOUT
+                    fail_reason = "Z3 solver timeout or resource limit reached"
+                elif last_status == "INVALID":
+                    outcome = RunOutcome.INVALID
+                    fail_reason = "Model candidate failed syntax or safety gate checks"
+                else:
+                    outcome = RunOutcome.FAILED_EXHAUSTED
+                    fail_reason = "Max iterations reached without proving equivalence"
+
                 dispatch("final", {
-                    "status": "FAILED",
+                    "status": outcome.value,
                     "final_expr": None,
                     "obf_nodes": obf_nodes,
                     "final_nodes": None,
                     "compression_pct": 0.0,
                     "total_ms": total_ms,
                     "attempts": iteration,
-                    "reason": "Max iterations reached without proving equivalence",
+                    "reason": fail_reason,
                     "backend": backend_name,
                     "model_name": model_name,
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
-                    "final_status": "FAILED",
+                    "final_status": outcome.value,
                     "attempts": iteration,
                     "total_ms": total_ms,
                 })

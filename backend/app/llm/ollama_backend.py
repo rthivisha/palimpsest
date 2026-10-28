@@ -51,7 +51,6 @@ class OllamaBackend(BaseLLMBackend):
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
-        seed: Optional[int] = None,
     ) -> str:
         """Streams completion tokens from Ollama, checking for cancellation between tokens."""
         if should_cancel and should_cancel():
@@ -60,21 +59,17 @@ class OllamaBackend(BaseLLMBackend):
         effective_max_tokens = max_tokens if max_tokens is not None else self.num_predict
 
         url = f"{self.base_url}/api/chat"
-        options = {
-            "temperature": temperature,
-            "num_predict": effective_max_tokens,
-            "num_ctx": 4096,
-            "stop": ["<|im_end|>", "<|im_start|>"],
-        }
-        if seed is not None:
-            options["seed"] = seed
-
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": True,
             "keep_alive": self.keep_alive,
-            "options": options,
+            "options": {
+                "temperature": temperature,
+                "num_predict": effective_max_tokens,
+                "num_ctx": 4096,
+                "stop": ["<|im_end|>", "<|im_start|>"],
+            },
         }
 
         generated_chunks: List[str] = []

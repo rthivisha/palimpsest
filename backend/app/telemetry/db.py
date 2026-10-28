@@ -339,9 +339,9 @@ class TelemetryDB:
                 cur = conn.execute(f"""
                     SELECT
                         COUNT(*) as total_runs,
-                        SUM(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN 1 ELSE 0 END) as verified_runs,
-                        SUM(CASE WHEN final_status IN ('FAILED', 'REJECTED_UNSAFE', 'ERROR', 'CANCELLED') THEN 1 ELSE 0 END) as failed_runs,
-                        AVG(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' THEN compression_pct ELSE NULL END) as avg_compression,
+                        SUM(CASE WHEN final_status IN ('verified', 'VERIFIED_EQUIVALENT') THEN 1 ELSE 0 END) as verified_runs,
+                        SUM(CASE WHEN final_status IN ('failed-exhausted', 'unknown-timeout', 'invalid', 'rejected-unsafe', 'depth-rejected', 'unconvertible', 'FAILED', 'REJECTED_UNSAFE', 'ERROR', 'CANCELLED') THEN 1 ELSE 0 END) as failed_runs,
+                        AVG(CASE WHEN final_status IN ('verified', 'VERIFIED_EQUIVALENT') THEN compression_pct ELSE NULL END) as avg_compression,
                         AVG(total_ms) as avg_latency_ms,
                         AVG(attempts) as avg_attempts
                     FROM runs{where_clause};

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from backend.app.config import settings
 from backend.app.core.ast_utils import count_nodes
+from backend.app.core.outcomes import RunOutcome, EvalOutcome, determine_verified_outcome
 from backend.app.core.safety import is_safe_ast
 from backend.app.core.verifier import (
     STATUS_INVALID,
@@ -213,16 +214,17 @@ class EvalHarness:
         canonical = row.get("canonical", "")
 
         # 1. Safety Gate Check
-        safe, _ = is_safe_ast(expr)
+        safe, err = is_safe_ast(expr)
         if not safe:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            status = RunOutcome.DEPTH_REJECTED.value if "depth" in str(err).lower() else RunOutcome.REJECTED_UNSAFE.value
             return {
                 "row_id": row["id"],
                 "tier": row.get("tier", "unknown"),
                 "row_type": row.get("row_type", "validation"),
                 "expression": expr,
                 "canonical": canonical,
-                "status": "GATE_REJECTED",
+                "status": status,
                 "attempts_needed": None,
                 "total_ms": total_ms,
                 "z3_ms": 0.0,
@@ -237,14 +239,31 @@ class EvalHarness:
             # Create 64-bit BitVec symbols
             tree = ast.parse(expr, mode="eval")
             z3_start = time.perf_counter()
-            # Try native Z3 simplification through AST
             # For baseline: verify original against canonical with timeout
             verif = verify_equivalence(expr, canonical, timeout_ms=3000)
             z3_ms = round((time.perf_counter() - z3_start) * 1000, 2)
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-            is_success = verif["status"] == STATUS_VERIFIED
-            status = "SUCCESS_PROVEN" if is_success else "FAILED_EXHAUSTED"
+            if verif["status"] == STATUS_VERIFIED:
+                orig_nodes = count_nodes(expr)
+                cand_nodes = count_nodes(canonical)
+                is_idempotent = bool(row.get("is_idempotent", False))
+                outcome = determine_verified_outcome(orig_nodes, cand_nodes, is_idempotent)
+                status = outcome.value
+                attempts_needed = 1 if outcome == RunOutcome.VERIFIED else None
+                proven_expr = canonical if outcome == RunOutcome.VERIFIED else None
+            elif verif["status"] == STATUS_UNKNOWN:
+                status = RunOutcome.UNKNOWN_TIMEOUT.value
+                attempts_needed = None
+                proven_expr = None
+            elif verif["status"] == STATUS_INVALID:
+                status = RunOutcome.INVALID.value
+                attempts_needed = None
+                proven_expr = None
+            else:
+                status = RunOutcome.FAILED_EXHAUSTED.value
+                attempts_needed = None
+                proven_expr = None
 
             return {
                 "row_id": row["id"],
@@ -253,13 +272,13 @@ class EvalHarness:
                 "expression": expr,
                 "canonical": canonical,
                 "status": status,
-                "attempts_needed": 1 if is_success else None,
+                "attempts_needed": attempts_needed,
                 "total_ms": total_ms,
                 "z3_ms": z3_ms,
                 "model_ms": 0.0,
                 "is_idempotent": bool(row.get("is_idempotent", False)),
                 "is_constant_folding": bool(row.get("is_constant_folding", False)),
-                "proven_expr": canonical if is_success else None,
+                "proven_expr": proven_expr,
             }
         except Exception:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -269,7 +288,7 @@ class EvalHarness:
                 "row_type": row.get("row_type", "validation"),
                 "expression": expr,
                 "canonical": canonical,
-                "status": "UNCONVERTIBLE",
+                "status": RunOutcome.UNCONVERTIBLE.value,
                 "attempts_needed": None,
                 "total_ms": total_ms,
                 "z3_ms": 0.0,
@@ -291,16 +310,17 @@ class EvalHarness:
         row_type = row.get("row_type", "validation")
 
         # 1. Safety Gate Check
-        safe, _ = is_safe_ast(expr)
+        safe, err = is_safe_ast(expr)
         if not safe:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            status = RunOutcome.DEPTH_REJECTED.value if "depth" in str(err).lower() else RunOutcome.REJECTED_UNSAFE.value
             return {
                 "row_id": row["id"],
                 "tier": tier,
                 "row_type": row_type,
                 "expression": expr,
                 "canonical": canonical,
-                "status": "GATE_REJECTED",
+                "status": status,
                 "attempts_needed": None,
                 "total_ms": total_ms,
                 "z3_ms": 0.0,
@@ -323,7 +343,7 @@ class EvalHarness:
                     "row_type": row_type,
                     "expression": expr,
                     "canonical": canonical,
-                    "status": "DEPTH_REJECTED",
+                    "status": RunOutcome.DEPTH_REJECTED.value,
                     "attempts_needed": None,
                     "total_ms": total_ms,
                     "z3_ms": 0.0,
@@ -340,7 +360,7 @@ class EvalHarness:
                 "row_type": row_type,
                 "expression": expr,
                 "canonical": canonical,
-                "status": "INVALID_SYNTAX",
+                "status": RunOutcome.INVALID.value,
                 "attempts_needed": None,
                 "total_ms": total_ms,
                 "z3_ms": 0.0,
@@ -365,6 +385,7 @@ class EvalHarness:
             "final_status": None,
             "error_message": None,
             "temperature": 0.2,
+            "is_idempotent": bool(row.get("is_idempotent", False)),
         }
 
         try:
@@ -375,27 +396,47 @@ class EvalHarness:
             # Determine first successful attempt index
             history = final_state.get("history", [])
             success_iteration: Optional[int] = None
+            proven_cand: Optional[str] = None
             total_z3_ms = 0.0
             for att in history:
                 total_z3_ms += att.get("latency_ms", 0.0)
                 if att.get("status") == STATUS_VERIFIED and success_iteration is None:
                     success_iteration = att.get("iteration")
+                    proven_cand = att.get("candidate")
 
-            if final_status == "VERIFIED_EQUIVALENT" or success_iteration is not None:
-                status = "SUCCESS_PROVEN"
-                attempts_needed = success_iteration or len(history)
-            elif final_status == "REJECTED_UNSAFE":
-                status = "GATE_REJECTED"
+            if success_iteration is not None or final_status in (
+                RunOutcome.VERIFIED.value,
+                RunOutcome.VERIFIED_NOT_SIMPLER.value,
+                "VERIFIED_EQUIVALENT",
+            ):
+                cand_expr = proven_cand or final_state.get("current_candidate") or canonical
+                orig_nodes = count_nodes(expr)
+                cand_nodes = count_nodes(cand_expr) if cand_expr else orig_nodes
+                is_idempotent = bool(row.get("is_idempotent", False))
+                outcome = determine_verified_outcome(orig_nodes, cand_nodes, is_idempotent)
+                status = outcome.value
+                attempts_needed = success_iteration if outcome == RunOutcome.VERIFIED else None
+                proven_expr = cand_expr if outcome == RunOutcome.VERIFIED else None
+            elif final_status in (RunOutcome.DEPTH_REJECTED.value, "DEPTH_REJECTED"):
+                status = RunOutcome.DEPTH_REJECTED.value
                 attempts_needed = None
+                proven_expr = None
+            elif final_status in (RunOutcome.REJECTED_UNSAFE.value, "REJECTED_UNSAFE"):
+                status = RunOutcome.REJECTED_UNSAFE.value
+                attempts_needed = None
+                proven_expr = None
             elif any(att.get("status") == STATUS_UNKNOWN for att in history):
-                status = "TIMEOUT_UNKNOWN"
+                status = RunOutcome.UNKNOWN_TIMEOUT.value
                 attempts_needed = None
+                proven_expr = None
             elif any(att.get("status") == STATUS_INVALID for att in history):
-                status = "INVALID_SYNTAX"
+                status = RunOutcome.INVALID.value
                 attempts_needed = None
+                proven_expr = None
             else:
-                status = "FAILED_EXHAUSTED"
+                status = RunOutcome.FAILED_EXHAUSTED.value
                 attempts_needed = None
+                proven_expr = None
 
             model_ms = max(0.0, total_ms - total_z3_ms)
 
@@ -412,7 +453,7 @@ class EvalHarness:
                 "model_ms": round(model_ms, 2),
                 "is_idempotent": bool(row.get("is_idempotent", False)),
                 "is_constant_folding": bool(row.get("is_constant_folding", False)),
-                "proven_expr": final_state.get("current_candidate") if status == "SUCCESS_PROVEN" else None,
+                "proven_expr": proven_expr,
             }
         except Exception as exc:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -422,7 +463,7 @@ class EvalHarness:
                 "row_type": row_type,
                 "expression": expr,
                 "canonical": canonical,
-                "status": "TIMEOUT_UNKNOWN" if "timeout" in str(exc).lower() else "INVALID_SYNTAX",
+                "status": RunOutcome.UNKNOWN_TIMEOUT.value if "timeout" in str(exc).lower() else RunOutcome.INVALID.value,
                 "attempts_needed": None,
                 "total_ms": total_ms,
                 "z3_ms": 0.0,
@@ -462,10 +503,10 @@ class EvalHarness:
         if total == 0:
             return {"total_evaluated": 0}
 
-        # Derived K=1, 3, 5 successes
-        k1_success = sum(1 for r in all_results if r["status"] == "SUCCESS_PROVEN" and r["attempts_needed"] == 1)
-        k3_success = sum(1 for r in all_results if r["status"] == "SUCCESS_PROVEN" and r["attempts_needed"] and r["attempts_needed"] <= 3)
-        k5_success = sum(1 for r in all_results if r["status"] == "SUCCESS_PROVEN" and r["attempts_needed"] and r["attempts_needed"] <= 5)
+        # Derived K=1, 3, 5 successes (only strictly simpler verified candidates count)
+        k1_success = sum(1 for r in all_results if r["status"] == RunOutcome.VERIFIED.value and r["attempts_needed"] == 1)
+        k3_success = sum(1 for r in all_results if r["status"] == RunOutcome.VERIFIED.value and r["attempts_needed"] and r["attempts_needed"] <= 3)
+        k5_success = sum(1 for r in all_results if r["status"] == RunOutcome.VERIFIED.value and r["attempts_needed"] and r["attempts_needed"] <= 5)
 
         k1_pct = round((k1_success / total) * 100, 2)
         k3_pct = round((k3_success / total) * 100, 2)

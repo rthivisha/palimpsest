@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.routes_run import run_lock
 from backend.app.config import settings
+from backend.app.core.outcomes import RunOutcome
 from backend.app.core.verifier import verify_equivalence
 from backend.app.llm.base import BaseLLMBackend, LLMBackendError
 from backend.app.llm.fake import FakeLLMBackend
@@ -144,13 +145,28 @@ class TestSSEStreaming:
 
         # Check final event payload
         final_payload = events[-1][1]
-        assert final_payload["status"] == "VERIFIED_EQUIVALENT"
+        assert final_payload["status"] == RunOutcome.VERIFIED.value
         assert final_payload["final_expr"] == "x + y"
         assert final_payload["obf_nodes"] == 9
         assert final_payload["final_nodes"] == 3
         assert final_payload["compression_pct"] == 66.67
         assert final_payload["attempts"] == 2
         assert final_payload["reason"] is None
+
+    def test_verified_not_simpler_emits_appropriate_status(self, temp_db):
+        """When candidate is proven equivalent but not simpler than original, final status is verified-not-simpler."""
+        fake_llm = FakeLLMBackend(always_candidate="(x ^ y) + 2 * (x & y)")
+        with patch("backend.app.api.routes_run.get_backend", return_value=fake_llm):
+            client = TestClient(app)
+            response = client.post(
+                "/api/run",
+                json={"expression": "x + y", "max_iterations": 2},
+            )
+            assert response.status_code == 200
+            events = parse_sse_events(response.text)
+            final_payload = events[-1][1]
+            assert final_payload["status"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
+            assert final_payload["reason"] == "Verified equivalent, but not simpler"
 
     def test_rejected_unsafe_emits_final(self, temp_db):
         """Unsafe inputs are rejected by the gate, ending in final(REJECTED_UNSAFE) with obf_nodes=0."""
@@ -174,7 +190,7 @@ class TestSSEStreaming:
         assert run_started_payload["obf_nodes"] == 0
 
         final_payload = events[-1][1]
-        assert final_payload["status"] == "REJECTED_UNSAFE"
+        assert final_payload["status"] == RunOutcome.REJECTED_UNSAFE.value
         assert final_payload["obf_nodes"] == 0
         assert final_payload["final_expr"] is None
         assert final_payload["attempts"] == 0
@@ -219,7 +235,7 @@ class TestSSEStreaming:
         assert event_names == expected_sequence
 
         final_payload = events[-1][1]
-        assert final_payload["status"] == "FAILED"
+        assert final_payload["status"] == RunOutcome.FAILED_EXHAUSTED.value
         assert final_payload["attempts"] == 2
         assert final_payload["final_expr"] is None
         assert "Max iterations reached" in final_payload["reason"]
@@ -327,12 +343,12 @@ class TestSSEStreaming:
         temp_db.sync()
         run_record = temp_db.get_run(run_id)
         assert run_record is not None
-        assert run_record["final_status"] == "REJECTED_UNSAFE"
+        assert run_record["final_status"] == RunOutcome.DEPTH_REJECTED.value
         assert run_record["obf_nodes"] == 0
         assert run_record["attempts"] == 0
 
     def test_api_depth_chain_rejected_cleanly(self):
-        """POST /api/run with 2,400-term chain returns normal stream with REJECTED_UNSAFE (no 500, no RecursionError)."""
+        """POST /api/run with 2,400-term chain returns normal stream with depth-rejected."""
         chain_expr = "x" + "+x" * 2399  # 4,799 characters, depth > 2400
         client = TestClient(app)
         response = client.post(
@@ -351,7 +367,7 @@ class TestSSEStreaming:
         ]
         assert events[0][1]["obf_nodes"] == 0
         final_payload = events[-1][1]
-        assert final_payload["status"] == "REJECTED_UNSAFE"
+        assert final_payload["status"] == RunOutcome.DEPTH_REJECTED.value
         assert final_payload["obf_nodes"] == 0
         assert final_payload["attempts"] == 0
         assert "depth exceeds limit" in final_payload["reason"].lower()
@@ -376,7 +392,7 @@ class TestSSEStreaming:
 
             final_events = [data for name, data in events if name == "final"]
             assert len(final_events) == 1
-            assert final_events[0]["status"] == "FAILED"
+            assert final_events[0]["status"] == RunOutcome.INVALID.value
 
     def test_retry_feedback_format_single_line_and_bounded(self, temp_db, monkeypatch):
         """The 'Error:' text in retry feedback is strictly single-line, <= 200 chars, and excludes raw model output."""

@@ -68,16 +68,20 @@ To minimize redundant compute, each expression row is run **exactly once** throu
 ### Universal Denominator Rule
 **Every row stays in the denominator ($N$) across all metrics.** Expressions rejected by the AST depth gate (`DEPTH_REJECTED`), security gate (`GATE_REJECTED`), or timing out (`TIMEOUT_UNKNOWN`) are never discarded from the evaluation pool.
 
-### Mutually Exclusive Outcome Categories
+### Mutually Exclusive Outcome Categories (Unified `RunOutcome` Enum)
 
-| Outcome Category | Description |
+All synthesis attempts, evaluation rows, and baselines evaluate to exactly one outcome from the unified outcome enum:
+
+| Outcome Enum | Description |
 | :--- | :--- |
-| **SUCCESS_PROVEN** | Z3 solver returned `UNSAT` (`QF_BV_UNSAT_64BIT_VERIFIED`) within $K$ attempts. Equivalent canonical identity formally proven. |
-| **FAILED_EXHAUSTED** | Model exhausted all $K$ CEGIS loop attempts, receiving formal counterexamples on each iteration, without proposing an equivalent candidate. |
-| **TIMEOUT_UNKNOWN** | Z3 solver or model inference exceeded allocated time budget, returning `UNKNOWN`. |
-| **INVALID_SYNTAX** | Model proposed invalid Python syntax or non-MBA operators failing the AST whitelist. |
-| **DEPTH_REJECTED** | Expression or candidate exceeded `MAX_AST_DEPTH` (default 100) or character limits. Reported in its own distinct category. |
-| **GATE_REJECTED** | External row violated security gate whitelist (e.g. unauthorized calls, disallowed types). Reported independently. |
+| **`verified`** | Z3 solver returned `UNSAT` (`QF_BV_UNSAT_64BIT_VERIFIED`) AND candidate AST node count is strictly smaller than original (`cand_nodes < obf_nodes`), or for `IDEMPOTENT` rows, no larger than original (`cand_nodes <= obf_nodes`). |
+| **`verified-not-simpler`** | Z3 solver returned `UNSAT`, but candidate AST node count is NOT simpler than original (`cand_nodes >= obf_nodes`, or for idempotent rows `cand_nodes > obf_nodes`). Reported in UI as "Verified equivalent, but not simpler" and excluded from success numerator. |
+| **`failed-exhausted`** | Model exhausted all $K$ CEGIS loop attempts, receiving formal counterexamples on each iteration, without proposing an equivalent candidate. |
+| **`unknown-timeout`** | Z3 solver or model inference exceeded allocated time budget, returning `UNKNOWN`. |
+| **`invalid`** | Model proposed invalid Python syntax or non-MBA operators failing the AST whitelist. |
+| **`rejected-unsafe`** | Initial input expression rejected by the AST security gate whitelist. |
+| **`depth-rejected`** | Obfuscated input or candidate exceeded `MAX_AST_DEPTH` (default 100). |
+| **`unconvertible`** | In `--z3-only` baseline mode, expression could not be parsed or safely transformed into Z3 bit-vectors. |
 
 ### Sub-Category Tracking by Tier
 In addition to the primary outcomes, the harness reports specific transformation classes:
@@ -91,7 +95,9 @@ Both categories are reported separately and broken down by **tier** (`linear`, `
 
 The metric **"Success within $K$ attempts (CEGIS)"** is reported for $K \in \{1, 3, 5\}$:
 
-$$\text{Success within } K \text{ attempts} = \frac{\sum_{i=1}^{N} \mathbb{I}(\text{attempts}_i \le K \land \text{status}_i = \text{SUCCESS\_PROVEN})}{N}$$
+$$\text{Success within } K \text{ attempts} = \frac{\sum_{i=1}^{N} \mathbb{I}(\text{attempts}_i \le K \land \text{status}_i = \text{verified})}{N}$$
+
+Success strictly requires both formal Z3 UNSAT equivalence and AST node reduction (`cand_nodes < obf_nodes`, or `cand_nodes <= obf_nodes` for IDEMPOTENT rows). Rows classified as `verified-not-simpler` remain in the universal denominator $N$ but do not count toward success.
 
 Because sample proportions approach boundaries ($0\%$ or $100\%$), normal approximation intervals are invalid. PALIMPSEST strictly reports **95% Wilson Score Intervals**:
 

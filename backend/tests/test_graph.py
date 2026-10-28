@@ -16,6 +16,7 @@ Tests:
 """
 import pytest
 
+from backend.app.core.outcomes import RunOutcome
 from backend.app.graph.build import build_graph
 from backend.app.graph.state import PalimpsestState
 from backend.app.llm.fake import FakeLLMBackend
@@ -161,8 +162,8 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        # Must succeed with formal proof
-        assert result["final_status"] == "VERIFIED_EQUIVALENT"
+        # Must succeed with formal proof and node reduction (9 -> 3)
+        assert result["final_status"] == RunOutcome.VERIFIED.value
         assert result["final_expr"] == "x + y"
         assert result["obf_nodes"] == 9
         assert result["final_nodes"] == 3
@@ -179,8 +180,26 @@ class TestLangGraphLoop:
         assert history[1]["candidate"] == "x + y"
         assert history[1]["status"] == "QF_BV_UNSAT_64BIT_VERIFIED"
 
+    def test_graph_verified_not_simpler_when_candidate_nodes_not_smaller(self):
+        """When candidate is proven equivalent but has equal or more AST nodes, outcome is verified-not-simpler."""
+        # Original: x + y (3 nodes). Candidate: (x ^ y) + 2 * (x & y) (9 nodes)
+        backend = FakeLLMBackend(always_candidate="(x ^ y) + 2 * (x & y)")
+        graph = build_graph(backend)
+        state: PalimpsestState = {
+            "obfuscated_expr": "x + y",
+            "max_iterations": 3,
+            "iteration": 0,
+            "history": [],
+            "temperature": 0.2,
+        }
+
+        result = graph.invoke(state)
+        assert result["final_status"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
+        assert result["final_expr"] == "(x ^ y) + 2 * (x & y)"
+        assert result["error_message"] == "Verified equivalent, but not simpler"
+
     def test_graph_fails_honestly_when_max_iterations_reached(self):
-        """If model guesses incorrectly repeatedly, graph must terminate with FAILED."""
+        """If model guesses incorrectly repeatedly, graph must terminate with failed-exhausted."""
         # Backend that always proposes wrong candidate "x ^ y"
         backend = FakeLLMBackend(always_candidate="x ^ y")
         graph = build_graph(backend)
@@ -194,7 +213,7 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == "FAILED"
+        assert result["final_status"] == RunOutcome.FAILED_EXHAUSTED.value
         assert result["final_expr"] is None
         assert result["compression_pct"] == 0.0
         assert len(result["history"]) == 3
@@ -215,7 +234,7 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == "VERIFIED_EQUIVALENT"
+        assert result["final_status"] == RunOutcome.VERIFIED.value
         assert result["final_expr"] == "x + y"
         assert len(result["history"]) == 2
         assert result["history"][0]["status"] == "INVALID"
@@ -235,7 +254,7 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == "REJECTED_UNSAFE"
+        assert result["final_status"] == RunOutcome.REJECTED_UNSAFE.value
         assert len(result["history"]) == 0
         assert "Security Gate Rejection" in result["error_message"]
 
