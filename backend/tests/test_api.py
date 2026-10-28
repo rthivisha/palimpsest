@@ -1040,6 +1040,125 @@ class TestHostHeaderAndREST:
         assert res_bad.status_code == 400
         assert "Invalid backend" in res_bad.json()["detail"]
 
+    def test_invalid_backend_returns_400_on_stats(self, temp_db):
+        """GET /api/stats rejects invalid backend names with HTTP 400 Bad Request."""
+        client = TestClient(app)
+        for bad_backend in ["unsupported_model", "gpt4", "claude", "random_string"]:
+            res = client.get(f"/api/stats?backend={bad_backend}")
+            assert res.status_code == 400
+            assert "Invalid backend" in res.json()["detail"]
+
+    def test_hostile_backend_string_is_bound_as_parameter(self, temp_db):
+        """Verifies hostile SQL injection attempts are safely parameterized and aliases are accepted."""
+        client = TestClient(app)
+
+        # Hostile SQL strings rejected with HTTP 400 at API layer
+        hostile_payloads = [
+            "fake' OR '1'='1",
+            "fake'; DROP TABLE runs; --",
+            "llamacpp' UNION SELECT 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 --",
+            "' OR 1=1 --",
+        ]
+        for hostile in hostile_payloads:
+            res = client.get(f"/api/stats?backend={hostile}")
+            assert res.status_code == 400
+            assert "Invalid backend" in res.json()["detail"]
+
+        # Insert a run with canonical backend 'llamacpp'
+        temp_db.record_run({
+            "run_id": "run_llama_alias",
+            "expression": "x + 0",
+            "obf_nodes": 3,
+            "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified",
+            "final_expr": "x",
+            "final_nodes": 1,
+            "compression_pct": 66.67,
+            "attempts": 1,
+            "total_ms": 120.0,
+            "backend": "llama-cpp",  # recorded with hyphen alias, stored canonical
+            "max_iterations": 5,
+        })
+        temp_db.sync()
+
+        # Both aliases llama_cpp and llama-cpp resolve to canonical llamacpp and query using bound parameters
+        for alias in ["llama_cpp", "llama-cpp", "llamacpp"]:
+            res_alias = client.get(f"/api/stats?backend={alias}")
+            assert res_alias.status_code == 200
+            stats = res_alias.json()
+            assert stats["total_runs"] == 1
+            assert stats["verified_runs"] == 1
+
+    def test_stats_response_has_proven_equivalent_rate_pct_and_simpler_rate_pct(self, temp_db):
+        """GET /api/stats includes proven_equivalent_rate_pct and simpler_rate_pct separately."""
+        # 1. Verified equivalent AND strictly simpler
+        temp_db.record_run({
+            "run_id": "r_simpler",
+            "expression": "(x ^ y) + 2 * (x & y)",
+            "obf_nodes": 9,
+            "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified",
+            "final_expr": "x + y",
+            "final_nodes": 3,
+            "compression_pct": 66.67,
+            "attempts": 2,
+            "total_ms": 100.0,
+            "backend": "fake",
+            "max_iterations": 5,
+        })
+        # 2. Verified equivalent but NOT simpler (idempotent / unchanged AST node count)
+        temp_db.record_run({
+            "run_id": "r_notsimpler",
+            "expression": "x + y",
+            "obf_nodes": 3,
+            "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified-not-simpler",
+            "final_expr": "x + y",
+            "final_nodes": 3,
+            "compression_pct": 0.0,
+            "attempts": 1,
+            "total_ms": 50.0,
+            "backend": "fake",
+            "max_iterations": 5,
+        })
+        # 3. Failed exhausted
+        temp_db.record_run({
+            "run_id": "r_failed",
+            "expression": "x & ~x",
+            "obf_nodes": 4,
+            "final_status": "FAILED",
+            "outcome": "failed-exhausted",
+            "final_expr": None,
+            "final_nodes": None,
+            "compression_pct": 0.0,
+            "attempts": 5,
+            "total_ms": 200.0,
+            "backend": "fake",
+            "max_iterations": 5,
+        })
+        temp_db.sync()
+
+        client = TestClient(app)
+        res = client.get("/api/stats")
+        assert res.status_code == 200
+        stats = res.json()
+
+        assert "proven_equivalent_rate_pct" in stats
+        assert "simpler_rate_pct" in stats
+        assert "strictly_simpler_rate_pct" in stats
+
+        # Total completed = 3 (2 verified + 1 failed_exhausted)
+        assert stats["completed_runs"] == 3
+        assert stats["verified_runs"] == 2
+        assert stats["strictly_simpler_runs"] == 1
+
+        # proven_equivalent_rate_pct is (2 verified / 3 completed) = 66.67%
+        assert stats["proven_equivalent_rate_pct"] == 66.67
+
+        # simpler_rate_pct is (1 strictly simpler / 2 verified) = 50.0%
+        assert stats["simpler_rate_pct"] == 50.0
+        assert stats["strictly_simpler_rate_pct"] == 50.0
+
 
 # ==============================================================================
 # 5. Database Pragmas, Indexes, and Temperature Escalation Tests

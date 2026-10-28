@@ -9,6 +9,10 @@ from backend.app.telemetry.db import telemetry_db
 router = APIRouter()
 
 ALLOWED_STATS_BACKENDS = {"fake", "ollama", "llamacpp"}
+BACKEND_ALIASES = {
+    "llama_cpp": "llamacpp",
+    "llama-cpp": "llamacpp",
+}
 
 
 CURATED_EXAMPLES: List[Dict[str, Any]] = [
@@ -164,6 +168,7 @@ async def get_stats(
     """Returns aggregate synthesis statistics over past de-obfuscation runs."""
     if backend is not None:
         clean = backend.lower().strip()
+        clean = BACKEND_ALIASES.get(clean, clean)
         if clean not in ALLOWED_STATS_BACKENDS:
             raise HTTPException(
                 status_code=400,

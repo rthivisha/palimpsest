@@ -369,7 +369,8 @@ async def start_run(req: RunRequest, request: Request):
 
     try:
         run_id = f"run_{uuid.uuid4().hex[:12]}"
-        backend_name = settings.PALIMPSEST_BACKEND
+        raw_backend = settings.PALIMPSEST_BACKEND.lower().strip()
+        backend_name = "llamacpp" if raw_backend in ("llamacpp", "llama_cpp", "llama-cpp") else raw_backend
         if backend_name == "ollama":
             model_name = settings.OLLAMA_MODEL
         elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):

@@ -23,6 +23,20 @@ from backend.app.config import settings
 
 logger = logging.getLogger("palimpsest.telemetry")
 
+BACKEND_ALIASES: Dict[str, str] = {
+    "llama_cpp": "llamacpp",
+    "llama-cpp": "llamacpp",
+}
+ALLOWED_BACKENDS = {"fake", "ollama", "llamacpp"}
+
+
+def normalize_backend_name(raw: Optional[str]) -> str:
+    """Normalizes model backend name to canonical form (e.g. 'llamacpp') and handles aliases."""
+    if not raw:
+        return "fake"
+    clean = str(raw).lower().strip()
+    return BACKEND_ALIASES.get(clean, clean)
+
 
 def stringify_witness(witness: Optional[Dict[str, Any]]) -> Optional[str]:
     """Serializes a witness dictionary into JSON with all values converted to strings."""
@@ -210,7 +224,7 @@ class TelemetryDB:
                                 data.get("compression_pct"),
                                 data.get("attempts", 0),
                                 data.get("total_ms", 0.0),
-                                data.get("backend", "fake"),
+                                normalize_backend_name(data.get("backend", "fake")),
                                 data.get("model_name"),
                                 data.get("max_iterations", 5),
                             ))
@@ -392,16 +406,15 @@ class TelemetryDB:
         backend: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Calculates aggregate statistics over runs, filtering by validated backend using bound parameters."""
-        allowed_backends = {"fake", "ollama", "llamacpp"}
         try:
             self.sync()
             with self._get_read_conn() as conn:
                 where_clauses = []
                 params = []
                 if backend:
-                    backend_clean = backend.lower().strip()
-                    if backend_clean not in allowed_backends:
-                        raise ValueError(f"Invalid backend '{backend}'. Must be one of: {sorted(allowed_backends)}")
+                    backend_clean = normalize_backend_name(backend)
+                    if backend_clean not in ALLOWED_BACKENDS:
+                        raise ValueError(f"Invalid backend '{backend}'. Must be one of: {sorted(ALLOWED_BACKENDS)}")
                     where_clauses.append("LOWER(backend) = ?")
                     params.append(backend_clean)
                 elif exclude_fake:
