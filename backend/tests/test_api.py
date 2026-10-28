@@ -1046,10 +1046,10 @@ class TestDatabasePragmasAndIndexes:
         assert r2["temperature"] == 0.3
 
     def test_old_schema_database_migration(self, tmp_path):
-        """Older schema databases without model_name, outcome, and final_nodes are migrated on startup."""
+        """Verifies migration adds columns and accurately backfills all 6 legacy row kinds with correct stats."""
         db_file = str(tmp_path / "old_schema.sqlite")
         conn = sqlite3.connect(db_file)
-        # Create legacy table without model_name, outcome, final_nodes
+        # Create legacy table without model_name, outcome, final_nodes, reason
         conn.execute("""
             CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
@@ -1065,18 +1065,46 @@ class TestDatabasePragmasAndIndexes:
                 max_iterations INTEGER NOT NULL
             );
         """)
-        # Row 1: legacy row where candidate equals original (not simpler)
+        # Row 1: legacy VERIFIED_EQUIVALENT row where candidate is strictly simpler
         conn.execute("""
             INSERT INTO runs VALUES (
-                'run_legacy_1', '2026-01-01T00:00:00Z', 'x + y', 3,
+                'run_legacy_verified_simpler', '2026-01-01T00:01:00Z', '(x ^ y) + 2 * (x & y)', 9,
+                'VERIFIED_EQUIVALENT', 'x + y', 66.67, 2, 20.0, 'fake', 5
+            );
+        """)
+        # Row 2: legacy VERIFIED_EQUIVALENT row where candidate equals original (not simpler)
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_verified_not_simpler', '2026-01-01T00:00:00Z', 'x + y', 3,
                 'VERIFIED_EQUIVALENT', 'x + y', 0.0, 1, 10.5, 'fake', 5
             );
         """)
-        # Row 2: legacy row where candidate is strictly simpler
+        # Row 3: legacy FAILED row
         conn.execute("""
             INSERT INTO runs VALUES (
-                'run_legacy_2', '2026-01-01T00:01:00Z', '(x ^ y) + 2 * (x & y)', 9,
-                'VERIFIED_EQUIVALENT', 'x + y', 66.67, 2, 20.0, 'fake', 5
+                'run_legacy_failed', '2026-01-01T00:02:00Z', 'x + y', 3,
+                'FAILED', NULL, 0.0, 5, 50.0, 'fake', 5
+            );
+        """)
+        # Row 4: legacy REJECTED_UNSAFE row
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_rejected', '2026-01-01T00:03:00Z', '__import__(\"os\")', 0,
+                'REJECTED_UNSAFE', NULL, 0.0, 0, 1.0, 'fake', 5
+            );
+        """)
+        # Row 5: legacy CANCELLED row
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_cancelled', '2026-01-01T00:04:00Z', 'x + y', 3,
+                'CANCELLED', NULL, 0.0, 2, 25.0, 'fake', 5
+            );
+        """)
+        # Row 6: legacy ERROR row
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_error', '2026-01-01T00:05:00Z', 'x + y', 3,
+                'ERROR', NULL, 0.0, 1, 5.0, 'fake', 5
             );
         """)
         conn.commit()
@@ -1092,27 +1120,53 @@ class TestDatabasePragmasAndIndexes:
             assert "model_name" in cols
             assert "outcome" in cols
             assert "final_nodes" in cols
+            assert "reason" in cols
 
             # Legacy rows must have model_name 'unknown' and correctly derived outcomes
-            row1 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_1';").fetchone()
+            row1 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_verified_simpler';").fetchone()
             assert row1["model_name"] == "unknown"
-            assert row1["outcome"] == "verified-not-simpler"
+            assert row1["outcome"] == "verified"
             assert row1["final_nodes"] == 3
 
-            row2 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_2';").fetchone()
+            row2 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_verified_not_simpler';").fetchone()
             assert row2["model_name"] == "unknown"
-            assert row2["outcome"] == "verified"
+            assert row2["outcome"] == "verified-not-simpler"
             assert row2["final_nodes"] == 3
+
+            row3 = r_conn.execute("SELECT run_id, outcome FROM runs WHERE run_id = 'run_legacy_failed';").fetchone()
+            assert row3["outcome"] == "failed-exhausted"
+
+            row4 = r_conn.execute("SELECT run_id, outcome FROM runs WHERE run_id = 'run_legacy_rejected';").fetchone()
+            assert row4["outcome"] == "rejected-unsafe"
+
+            row5 = r_conn.execute("SELECT run_id, outcome FROM runs WHERE run_id = 'run_legacy_cancelled';").fetchone()
+            assert row5["outcome"] == "cancelled"
+
+            row6 = r_conn.execute("SELECT run_id, outcome FROM runs WHERE run_id = 'run_legacy_error';").fetchone()
+            assert row6["outcome"] == "error"
 
         # Check get_history and get_run treat old rows properly
         hist = db.get_history()
-        assert len(hist) == 2
+        assert len(hist) == 6
         assert hist[0]["model_name"] == "unknown"
 
-        detail = db.get_run("run_legacy_1")
+        detail = db.get_run("run_legacy_verified_not_simpler")
         assert detail is not None
         assert detail["model_name"] == "unknown"
         assert detail["outcome"] == "verified-not-simpler"
+        assert detail["reason"] is None
+
+        # Check get_stats aggregate calculations with universal accounting
+        stats = db.get_stats()
+        assert stats["total_runs"] == 6
+        assert stats["verified_runs"] == 2
+        assert stats["strictly_simpler_runs"] == 1
+        assert stats["failed_runs"] == 4
+        # Total must equal verified + failed without dropping any rows
+        assert stats["total_runs"] == stats["verified_runs"] + stats["failed_runs"]
+        # Simpler rate strictly excludes idempotent / not simpler rows (1 out of 2 = 50.0%)
+        assert stats["simpler_rate_pct"] == 50.0
+        assert stats["strictly_simpler_rate_pct"] == 50.0
 
     def test_cors_host_header_and_vite_proxy_integration(self):
         """Verifies localhost:5173 and 127.0.0.1:5173 pass CORS, the Host check, and the Vite proxy."""

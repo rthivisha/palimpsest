@@ -62,7 +62,7 @@ export interface FinalPayload {
   outcome?: RunOutcome | string;
   final_expr: string | null;
   obf_nodes: number;
-  final_nodes: number | null;
+  final_nodes: number | string | null;
   compression_pct: number;
   total_ms: number;
   attempts: number;
@@ -78,8 +78,9 @@ export interface RunSummary {
   obf_nodes: number;
   final_status: string;
   outcome?: string;
+  reason?: string | null;
   final_expr: string | null;
-  final_nodes?: number | null;
+  final_nodes?: number | string | null;
   compression_pct: number;
   attempts: number;
   total_ms: number;

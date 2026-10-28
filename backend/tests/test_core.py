@@ -411,6 +411,23 @@ class TestZ3Verifier:
         # x >> 66 == x >> 2
         assert verify_equivalence("x >> 66", "x >> 2", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
 
+    def test_shifts_by_64_or_more_in_both_semantics_modes(self):
+        """Verifies shift amounts >= 64 across both Z3 default and x86_mask modes."""
+        # 1. In 'z3' mode: shifts >= 64 yield 0
+        assert verify_equivalence("x << 64", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x >> 64", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x << 70", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x >> 128", "0", shift_semantics="z3")["status"] == STATUS_VERIFIED
+
+        # 2. In 'x86_mask' mode: shift amounts are masked with & 63
+        # 64 & 63 == 0 -> x << 0 == x
+        assert verify_equivalence("x << 64", "x", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
+        assert verify_equivalence("x >> 64", "x", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
+        # 70 & 63 == 6 -> x << 6
+        assert verify_equivalence("x << 70", "x << 6", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
+        # 128 & 63 == 0 -> x >> 0 == x
+        assert verify_equivalence("x >> 128", "x", shift_semantics="x86_mask")["status"] == STATUS_VERIFIED
+
     def test_timeout_returns_unknown(self):
         """Solver timeout returns STATUS_UNKNOWN gracefully."""
         # A timeout of 0 ms forces an immediate timeout in Z3

@@ -93,7 +93,15 @@ def run_synthesis_worker(
 
         if not safe:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            outcome = RunOutcome.DEPTH_REJECTED if "depth" in str(err_msg).lower() else RunOutcome.REJECTED_UNSAFE
+            if "depth" in str(err_msg).lower():
+                outcome = RunOutcome.DEPTH_REJECTED
+                reason = f"Security Gate Rejection: {err_msg}"
+            elif "syntax error" in str(err_msg).lower() or "unconvertible" in str(err_msg).lower():
+                outcome = RunOutcome.UNCONVERTIBLE
+                reason = f"Unconvertible expression: {err_msg}"
+            else:
+                outcome = RunOutcome.REJECTED_UNSAFE
+                reason = f"Security Gate Rejection: {err_msg}"
             dispatch("final", {
                 "status": "REJECTED_UNSAFE",
                 "outcome": outcome.value,
@@ -103,7 +111,7 @@ def run_synthesis_worker(
                 "compression_pct": 0.0,
                 "total_ms": total_ms,
                 "attempts": 0,
-                "reason": f"Security Gate Rejection: {err_msg}",
+                "reason": reason,
                 "backend": backend_name,
                 "model_name": model_name,
             })
@@ -111,6 +119,7 @@ def run_synthesis_worker(
                 "run_id": run_id,
                 "final_status": "REJECTED_UNSAFE",
                 "outcome": outcome.value,
+                "reason": reason,
                 "total_ms": total_ms,
                 "attempts": 0,
             })
@@ -233,6 +242,7 @@ def run_synthesis_worker(
                 dispatch("node_finished", {"node": "finalize_success"})
 
                 outcome = determine_verified_outcome(obf_nodes, cand_nodes, is_idempotent=False)
+                reason = None if outcome == RunOutcome.VERIFIED else "Verified equivalent, but not simpler"
 
                 dispatch("final", {
                     "status": "VERIFIED_EQUIVALENT",
@@ -243,7 +253,7 @@ def run_synthesis_worker(
                     "compression_pct": compression_pct,
                     "total_ms": total_ms,
                     "attempts": iteration,
-                    "reason": None if outcome == RunOutcome.VERIFIED else "Verified equivalent, but not simpler",
+                    "reason": reason,
                     "backend": backend_name,
                     "model_name": model_name,
                 })
@@ -251,6 +261,7 @@ def run_synthesis_worker(
                     "run_id": run_id,
                     "final_status": "VERIFIED_EQUIVALENT",
                     "outcome": outcome.value,
+                    "reason": reason,
                     "final_expr": candidate,
                     "final_nodes": cand_nodes,
                     "compression_pct": compression_pct,
@@ -308,6 +319,7 @@ def run_synthesis_worker(
                     "run_id": run_id,
                     "final_status": "FAILED",
                     "outcome": outcome.value,
+                    "reason": fail_reason,
                     "attempts": iteration,
                     "total_ms": total_ms,
                 })
@@ -320,6 +332,7 @@ def run_synthesis_worker(
                 "run_id": run_id,
                 "final_status": "CANCELLED",
                 "outcome": "cancelled",
+                "reason": "Execution aborted by user",
                 "total_ms": total_ms,
             })
         else:
@@ -330,6 +343,7 @@ def run_synthesis_worker(
                 "run_id": run_id,
                 "final_status": "ERROR",
                 "outcome": "error",
+                "reason": str(exc),
                 "total_ms": total_ms,
             })
     finally:

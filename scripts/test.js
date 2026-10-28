@@ -26,7 +26,7 @@ if (resBackend.status !== 0) {
 }
 
 console.log('\n[PALIMPSEST TEST] Running frontend unit tests (node --test)...');
-const resFrontend = spawnSync(process.execPath, ['--test', 'frontend/tests/compression.test.mjs'], {
+const resFrontend = spawnSync(process.execPath, ['--test', 'frontend/tests/compression.test.mjs', 'frontend/tests/replay.test.mjs'], {
   stdio: 'inherit',
   shell: false,
   env: process.env,
@@ -37,3 +37,4 @@ if (resFrontend.status !== 0) {
 }
 
 console.log('\n[PALIMPSEST TEST] All test suites passed successfully.');
+

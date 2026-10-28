@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { Attempt, FinalPayload, RunDetail, RunStartedPayload } from '../types';
+import { deriveReplayFinalResult } from '../utils/replay';
 
 interface UseRunStreamReturn {
   isRunning: boolean;
@@ -70,18 +71,7 @@ export function useRunStream(): UseRunStreamReturn {
     setBackend(pastRun.backend);
     if (pastRun.model_name) setModelName(pastRun.model_name);
     setAttempts(pastRun.attempts_history || []);
-    setFinalResult({
-      status: pastRun.final_status,
-      final_expr: pastRun.final_expr,
-      obf_nodes: pastRun.obf_nodes,
-      final_nodes: pastRun.final_status === 'VERIFIED_EQUIVALENT' && pastRun.final_expr ? 1 : null,
-      compression_pct: pastRun.compression_pct,
-      total_ms: pastRun.total_ms,
-      attempts: pastRun.attempts,
-      reason: pastRun.final_status === 'VERIFIED_EQUIVALENT' ? null : 'Max iterations reached without proving equivalence',
-      backend: pastRun.backend,
-      model_name: pastRun.model_name,
-    });
+    setFinalResult(deriveReplayFinalResult(pastRun));
     setError(null);
   }, []);
 

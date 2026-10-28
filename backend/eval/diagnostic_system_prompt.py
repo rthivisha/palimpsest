@@ -97,20 +97,15 @@ def main():
         default=42,
         help="Base seed for reproducibility (default: 42, each trial uses 42 + i)",
     )
-    parser.add_argument(
-        "--allow-fake",
-        action="store_true",
-        help="Allow running with FakeLLMBackend for testing the diagnostic script itself",
-    )
     args = parser.parse_args()
 
     random.seed(args.seed)
     backend_name = args.backend.lower().strip()
 
-    if backend_name == "fake" and not args.allow_fake:
+    if backend_name == "fake":
         print(
-            "ERROR: Diagnostic script refused to run against 'fake' backend without --allow-fake. "
-            "To test this script offline, pass --allow-fake explicitly.",
+            "ERROR: Diagnostic script strictly evaluates real neural language models and unconditionally "
+            "refuses the 'fake' backend. Configure a real SLM backend (e.g. PALIMPSEST_BACKEND=ollama or llamacpp).",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -120,6 +115,14 @@ def main():
     except Exception as exc:
         print(f"ERROR: Failed to initialize backend '{backend_name}': {exc}", file=sys.stderr)
         sys.exit(1)
+
+    if isinstance(backend, FakeLLMBackend):
+        print(
+            "ERROR: Diagnostic script strictly evaluates real neural language models and unconditionally "
+            "refuses FakeLLMBackend.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     print("=" * 80)
     print("PALIMPSEST SYSTEM PROMPT DIAGNOSTIC REPORT")

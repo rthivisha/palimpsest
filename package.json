@@ -6,10 +6,13 @@
     "dev": "node scripts/dev.js",
     "dev:backend": ".venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir backend/app",
     "dev:frontend": "cd frontend && node node_modules/vite/bin/vite.js",
+    "start": "node scripts/start.js",
+    "start:backend": ".venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000",
+    "start:frontend": "cd frontend && node node_modules/vite/bin/vite.js",
     "build:frontend": "cd frontend && node node_modules/typescript/bin/tsc --project tsconfig.json && node node_modules/vite/bin/vite.js build",
     "test": "node scripts/test.js",
     "test:backend": ".venv\\Scripts\\python.exe -m pytest backend/tests",
-    "test:frontend": "node --test frontend/tests/compression.test.mjs"
+    "test:frontend": "node --test frontend/tests/compression.test.mjs frontend/tests/replay.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -18,8 +18,8 @@ if (process.platform === 'win32') {
 
 console.log('======================================================================');
 console.log('  PALIMPSEST De-obfuscation Engine Dev Servers Starting');
-console.log('  - Frontend:    http://127.0.0.1:5173 (or http://localhost:5173)');
-console.log('  - Backend API: http://127.0.0.1:8000 (Docs: http://127.0.0.1:8000/docs)');
+console.log('  - Frontend:    http://127.0.0.1:5173 (strictly bound to IPv4 127.0.0.1)');
+console.log('  - Backend API: http://127.0.0.1:8000 (strictly bound to IPv4 127.0.0.1)');
 console.log('======================================================================');
 
 const { result, commands } = concurrently(
@@ -73,3 +73,22 @@ result.then(
     process.exit(1);
   }
 );
+
+result.then(
+  () => {
+    process.exit(0);
+  },
+  (err) => {
+    if (Array.isArray(err)) {
+      for (const e of err) {
+        if (!e.killed && e.exitCode !== 0) {
+          console.error(
+            `[PALIMPSEST DEV] Process failure: '${e.command ? e.command.name : 'unknown'}' exited with code ${e.exitCode}.`
+          );
+        }
+      }
+    }
+    process.exit(1);
+  }
+);
+

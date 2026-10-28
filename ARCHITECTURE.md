@@ -357,6 +357,14 @@ PALIMPSEST separates macro run-level lifecycle status (`final.status` / `runs.fi
 | Client disconnected or user pressed abort mid-run (Run-Level State) | *(Stream closed)* | *(Stream closed)* | `CANCELLED` | `cancelled` | **CANCELLED** (Slate Badge, `CANCELLED`) |
 | Unhandled exception or LLM daemon crash mid-run (Run-Level State) | *(error event)* | *(error event)* | `ERROR` | `error` | **SYNTHESIS ERROR** (Red Banner, `ERROR`) |
 
+#### Multi-Attempt Run Mapping Invariant
+When a CEGIS synthesis run executes across multiple attempts ($1 \dots K$), individual attempts may yield varying verification statuses (`SAT`, `UNKNOWN`, `INVALID`). Each attempt's granular status, latency, candidate expression, and counterexample witness are persisted in the `attempts` table. At the macro run level, every exhausted loop that terminates without proving equivalence maps strictly to **`failed-exhausted`** (`final.status: "FAILED"`, `final.outcome: "failed-exhausted"`, and `runs.outcome: "failed-exhausted"`). The granular per-attempt statuses (`SAT`, `UNKNOWN`, `INVALID`) remain queryable in the `attempts` history table.
+
+#### Provenance and Assignment of `is_idempotent`
+The `is_idempotent` boolean flag governs whether candidate expressions with AST node counts equal to the original are credited as verified:
+1. **Application Runtime (`routes_run.py`)**: `is_idempotent` is unconditionally **`False`** (`is_idempotent=False`). Arbitrary user-submitted MBA expressions cannot be assumed minimal without external ground truth. Therefore, the candidate must achieve strict node reduction (`cand_nodes < obf_nodes`) to receive `verified`; if `cand_nodes >= obf_nodes`, it receives `verified-not-simpler`.
+2. **Evaluation Benchmark (`backend/eval/harness.py`)**: `is_idempotent` is determined directly from the dataset row metadata: `is_idempotent = bool(row.get("is_idempotent", False))` (or `row["row_type"] == "idempotent"`). On ground-truth idempotent rows (where an already-minimal expression cannot be reduced further), candidate node count no larger than original (`cand_nodes <= obf_nodes`) earns `verified`.
+
 ### 7.4 String Serialization Contract
 - **SSE & REST JSON**: All 64-bit integer values (`expected`, `actual`, and all dictionary values in `witness`) are serialized strictly as **strings** (e.g. `"expected": "2"`, `"actual": "0"`, `"witness": {"x": "1", "y": "1"}`) to eliminate JavaScript IEEE 754 precision truncation on values $> 2^{53}-1$.
 - **Prompt Builder**: Preserves raw Python integer types (`{'x': 1, 'y': 1}`, `Expected: 2, Actual: 0`) character-for-character matching the teammate's training data.

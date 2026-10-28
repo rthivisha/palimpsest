@@ -33,3 +33,4 @@ test('isExpressionAlreadyMinimal detects simplified or differing expressions', (
   assert.strictEqual(isExpressionAlreadyMinimal('x + y', undefined), false);
   assert.strictEqual(isExpressionAlreadyMinimal('', ''), false);
 });
+

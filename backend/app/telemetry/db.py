@@ -60,6 +60,7 @@ class TelemetryDB:
                         obf_nodes INTEGER NOT NULL,
                         final_status TEXT NOT NULL,
                         outcome TEXT,
+                        reason TEXT,
                         final_expr TEXT,
                         final_nodes INTEGER,
                         compression_pct REAL,
@@ -70,7 +71,7 @@ class TelemetryDB:
                         max_iterations INTEGER NOT NULL
                     );
                 """)
-                # Migrations: add model_name, final_nodes, outcome columns if missing
+                # Migrations: add model_name, final_nodes, outcome, reason columns if missing
                 cursor = conn.execute("PRAGMA table_info(runs);")
                 columns = [row[1] for row in cursor.fetchall()]
                 if "model_name" not in columns:
@@ -81,6 +82,8 @@ class TelemetryDB:
                     conn.execute("ALTER TABLE runs ADD COLUMN final_nodes INTEGER;")
                 if "outcome" not in columns:
                     conn.execute("ALTER TABLE runs ADD COLUMN outcome TEXT;")
+                if "reason" not in columns:
+                    conn.execute("ALTER TABLE runs ADD COLUMN reason TEXT;")
 
                 # Migration for existing/legacy rows: normalize final_status & derive outcome
                 # 1. If final_status was set to an outcome enum, normalize back to blueprint final_status
@@ -88,7 +91,7 @@ class TelemetryDB:
                 conn.execute("UPDATE runs SET outcome = final_status, final_status = 'FAILED' WHERE final_status IN ('failed-exhausted', 'unknown-timeout', 'invalid');")
                 conn.execute("UPDATE runs SET outcome = final_status, final_status = 'REJECTED_UNSAFE' WHERE final_status IN ('rejected-unsafe', 'depth-rejected', 'unconvertible');")
 
-                # 2. Derive outcome for legacy rows where outcome is NULL from stored final_nodes, obf_nodes, and final_expr
+                # 2. Derive outcome for legacy rows where outcome is NULL or empty
                 cur_legacy = conn.execute("SELECT run_id, expression, obf_nodes, final_status, final_expr, compression_pct, final_nodes FROM runs WHERE outcome IS NULL OR outcome = '';")
                 legacy_rows = cur_legacy.fetchall()
                 for r_id, expr, obf_n, f_stat, f_expr, comp_pct, f_nodes in legacy_rows:
@@ -191,9 +194,9 @@ class TelemetryDB:
                             conn.execute("""
                                 INSERT OR REPLACE INTO runs (
                                     run_id, timestamp, expression, obf_nodes,
-                                    final_status, outcome, final_expr, final_nodes, compression_pct,
+                                    final_status, outcome, reason, final_expr, final_nodes, compression_pct,
                                     attempts, total_ms, backend, model_name, max_iterations
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                             """, (
                                 data["run_id"],
                                 data.get("timestamp", datetime.now(timezone.utc).isoformat()),
@@ -201,6 +204,7 @@ class TelemetryDB:
                                 data["obf_nodes"],
                                 data["final_status"],
                                 data.get("outcome"),
+                                data.get("reason"),
                                 data.get("final_expr"),
                                 data.get("final_nodes"),
                                 data.get("compression_pct"),
@@ -216,6 +220,7 @@ class TelemetryDB:
                                 UPDATE runs
                                 SET final_status = ?,
                                     outcome = COALESCE(?, outcome),
+                                    reason = COALESCE(?, reason),
                                     final_expr = COALESCE(?, final_expr),
                                     final_nodes = COALESCE(?, final_nodes),
                                     compression_pct = COALESCE(?, compression_pct),
@@ -225,6 +230,7 @@ class TelemetryDB:
                             """, (
                                 data["final_status"],
                                 data.get("outcome"),
+                                data.get("reason"),
                                 data.get("final_expr"),
                                 data.get("final_nodes"),
                                 data.get("compression_pct"),
@@ -311,7 +317,7 @@ class TelemetryDB:
             with self._get_read_conn() as conn:
                 query = """
                     SELECT run_id, timestamp, expression, obf_nodes,
-                           final_status, outcome, final_expr, final_nodes, compression_pct,
+                           final_status, outcome, reason, final_expr, final_nodes, compression_pct,
                            attempts, total_ms, backend, model_name, max_iterations
                     FROM runs
                 """
@@ -339,7 +345,7 @@ class TelemetryDB:
             with self._get_read_conn() as conn:
                 cur = conn.execute("""
                     SELECT run_id, timestamp, expression, obf_nodes,
-                           final_status, outcome, final_expr, final_nodes, compression_pct,
+                           final_status, outcome, reason, final_expr, final_nodes, compression_pct,
                            attempts, total_ms, backend, model_name, max_iterations
                     FROM runs
                     WHERE run_id = ?;
@@ -391,7 +397,7 @@ class TelemetryDB:
                         COUNT(*) as total_runs,
                         SUM(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' OR outcome IN ('verified', 'verified-not-simpler') THEN 1 ELSE 0 END) as verified_runs,
                         SUM(CASE WHEN outcome = 'verified' OR (final_status = 'VERIFIED_EQUIVALENT' AND compression_pct > 0.0) THEN 1 ELSE 0 END) as strictly_simpler_runs,
-                        SUM(CASE WHEN final_status != 'VERIFIED_EQUIVALENT' AND outcome NOT IN ('verified', 'verified-not-simpler') THEN 1 ELSE 0 END) as failed_runs,
+                        SUM(CASE WHEN final_status != 'VERIFIED_EQUIVALENT' AND COALESCE(outcome, '') NOT IN ('verified', 'verified-not-simpler') THEN 1 ELSE 0 END) as failed_runs,
                         AVG(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' OR outcome IN ('verified', 'verified-not-simpler') THEN compression_pct ELSE NULL END) as avg_compression,
                         AVG(total_ms) as avg_latency_ms,
                         AVG(attempts) as avg_attempts
@@ -405,6 +411,7 @@ class TelemetryDB:
                         "strictly_simpler_runs": 0,
                         "failed_runs": 0,
                         "success_rate_pct": 0.0,
+                        "strictly_simpler_rate_pct": 0.0,
                         "simpler_rate_pct": 0.0,
                         "avg_compression_pct": 0.0,
                         "avg_latency_ms": 0.0,
@@ -414,9 +421,10 @@ class TelemetryDB:
                 total = row["total_runs"]
                 verified = row["verified_runs"] or 0
                 strictly_simpler = row["strictly_simpler_runs"] or 0
-                failed = row["failed_runs"] or 0
+                failed = total - verified
                 success_rate = round((verified / total) * 100, 2) if total > 0 else 0.0
-                simpler_rate = round((strictly_simpler / verified) * 100, 2) if verified > 0 else 0.0
+                strictly_simpler_rate = round((strictly_simpler / verified) * 100, 2) if verified > 0 else 0.0
+                simpler_rate = strictly_simpler_rate
                 avg_comp = round(row["avg_compression"] or 0.0, 2)
                 avg_lat = round(row["avg_latency_ms"] or 0.0, 2)
                 avg_att = round(row["avg_attempts"] or 0.0, 2)
@@ -427,6 +435,7 @@ class TelemetryDB:
                     "strictly_simpler_runs": strictly_simpler,
                     "failed_runs": failed,
                     "success_rate_pct": success_rate,
+                    "strictly_simpler_rate_pct": strictly_simpler_rate,
                     "simpler_rate_pct": simpler_rate,
                     "avg_compression_pct": avg_comp,
                     "avg_latency_ms": avg_lat,
@@ -440,6 +449,7 @@ class TelemetryDB:
                 "strictly_simpler_runs": 0,
                 "failed_runs": 0,
                 "success_rate_pct": 0.0,
+                "strictly_simpler_rate_pct": 0.0,
                 "simpler_rate_pct": 0.0,
                 "avg_compression_pct": 0.0,
                 "avg_latency_ms": 0.0,

@@ -14,3 +14,4 @@ export function isExpressionAlreadyMinimal(
   if (!original || !candidate) return false;
   return original.trim() === candidate.trim();
 }
+

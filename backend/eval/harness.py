@@ -135,9 +135,14 @@ class EvalHarness:
                     is_idempotent INTEGER NOT NULL,
                     is_constant_folding INTEGER NOT NULL,
                     proven_expr TEXT,
+                    reason TEXT,
                     created_at TEXT NOT NULL
                 );
             """)
+            cursor = conn.execute("PRAGMA table_info(eval_results);")
+            columns = [r[1] for r in cursor.fetchall()]
+            if "reason" not in columns:
+                conn.execute("ALTER TABLE eval_results ADD COLUMN reason TEXT;")
         conn.close()
 
     def get_completed_row_ids(self) -> set:
@@ -158,8 +163,8 @@ class EvalHarness:
                     INSERT OR REPLACE INTO eval_results (
                         row_id, tier, row_type, expression, canonical,
                         status, attempts_needed, total_ms, z3_ms, model_ms,
-                        is_idempotent, is_constant_folding, proven_expr, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        is_idempotent, is_constant_folding, proven_expr, reason, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """, (
                     res["row_id"],
                     res["tier"],
@@ -174,6 +179,7 @@ class EvalHarness:
                     1 if res.get("is_idempotent") else 0,
                     1 if res.get("is_constant_folding") else 0,
                     res.get("proven_expr"),
+                    res.get("reason"),
                     datetime.now(timezone.utc).isoformat(),
                 ))
         finally:
@@ -280,7 +286,7 @@ class EvalHarness:
                 "is_constant_folding": bool(row.get("is_constant_folding", False)),
                 "proven_expr": proven_expr,
             }
-        except Exception:
+        except Exception as exc:
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
             return {
                 "row_id": row["id"],
@@ -296,6 +302,7 @@ class EvalHarness:
                 "is_idempotent": False,
                 "is_constant_folding": False,
                 "proven_expr": None,
+                "reason": f"Unconvertible expression: {str(exc)}",
             }
 
     def evaluate_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -425,15 +432,9 @@ class EvalHarness:
                 status = RunOutcome.REJECTED_UNSAFE.value
                 attempts_needed = None
                 proven_expr = None
-            elif any(att.get("status") == STATUS_UNKNOWN for att in history):
-                status = RunOutcome.UNKNOWN_TIMEOUT.value
-                attempts_needed = None
-                proven_expr = None
-            elif any(att.get("status") == STATUS_INVALID for att in history):
-                status = RunOutcome.INVALID.value
-                attempts_needed = None
-                proven_expr = None
             else:
+                # Multi-attempt run mapping invariant: every exhausted loop is failed-exhausted,
+                # with granular per-attempt verification results preserved in history/attempts.
                 status = RunOutcome.FAILED_EXHAUSTED.value
                 attempts_needed = None
                 proven_expr = None

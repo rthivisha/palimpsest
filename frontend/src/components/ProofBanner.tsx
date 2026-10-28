@@ -66,7 +66,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="z3" explainMode={explainMode} inline />
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes}) is not smaller than original ({finalResult.obf_nodes}).
+                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes ?? 'unknown'}) is not smaller than original ({finalResult.obf_nodes}).
               </p>
             </div>
           </div>
@@ -107,7 +107,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <span>EQUIVALENT CANDIDATE</span>
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-amber-300 font-bold">{finalResult.final_nodes} nodes</span>
+                <span className="text-amber-300 font-bold">{finalResult.final_nodes ?? 'unknown'} nodes</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal
@@ -196,7 +196,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="compression" explainMode={explainMode} inline />
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-emerald-300 font-bold">{finalResult.final_nodes} nodes</span>
+                <span className="text-emerald-300 font-bold">{finalResult.final_nodes ?? 'unknown'} nodes</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal
