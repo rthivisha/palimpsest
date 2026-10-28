@@ -163,7 +163,8 @@ class TestLangGraphLoop:
         result = graph.invoke(state)
 
         # Must succeed with formal proof and node reduction (9 -> 3)
-        assert result["final_status"] == RunOutcome.VERIFIED.value
+        assert result["final_status"] == "VERIFIED_EQUIVALENT"
+        assert result["outcome"] == RunOutcome.VERIFIED.value
         assert result["final_expr"] == "x + y"
         assert result["obf_nodes"] == 9
         assert result["final_nodes"] == 3
@@ -194,7 +195,8 @@ class TestLangGraphLoop:
         }
 
         result = graph.invoke(state)
-        assert result["final_status"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
+        assert result["final_status"] == "VERIFIED_EQUIVALENT"
+        assert result["outcome"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
         assert result["final_expr"] == "(x ^ y) + 2 * (x & y)"
         assert result["error_message"] == "Verified equivalent, but not simpler"
 
@@ -213,7 +215,8 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == RunOutcome.FAILED_EXHAUSTED.value
+        assert result["final_status"] == "FAILED"
+        assert result["outcome"] == RunOutcome.FAILED_EXHAUSTED.value
         assert result["final_expr"] is None
         assert result["compression_pct"] == 0.0
         assert len(result["history"]) == 3
@@ -234,7 +237,8 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == RunOutcome.VERIFIED.value
+        assert result["final_status"] == "VERIFIED_EQUIVALENT"
+        assert result["outcome"] == RunOutcome.VERIFIED.value
         assert result["final_expr"] == "x + y"
         assert len(result["history"]) == 2
         assert result["history"][0]["status"] == "INVALID"
@@ -254,7 +258,8 @@ class TestLangGraphLoop:
 
         result = graph.invoke(state)
 
-        assert result["final_status"] == RunOutcome.REJECTED_UNSAFE.value
+        assert result["final_status"] == "REJECTED_UNSAFE"
+        assert result["outcome"] == RunOutcome.REJECTED_UNSAFE.value
         assert len(result["history"]) == 0
         assert "Security Gate Rejection" in result["error_message"]
 

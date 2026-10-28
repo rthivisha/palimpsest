@@ -189,6 +189,7 @@ export function useRunStream(): UseRunStreamReturn {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
+      let receivedFinalOrError = false;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -318,6 +319,7 @@ export function useRunStream(): UseRunStreamReturn {
             }
 
             case 'final': {
+              receivedFinalOrError = true;
               setFinalResult(eventData as FinalPayload);
               setIsRunning(false);
               setActiveNode(null);
@@ -325,6 +327,7 @@ export function useRunStream(): UseRunStreamReturn {
             }
 
             case 'error': {
+              receivedFinalOrError = true;
               setError(eventData.error || 'Synthesis run terminated with an internal error.');
               setIsRunning(false);
               setActiveNode(null);
@@ -332,6 +335,10 @@ export function useRunStream(): UseRunStreamReturn {
             }
           }
         }
+      }
+
+      if (!receivedFinalOrError) {
+        setError('Backend server disconnected before synthesis run completed.');
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {

@@ -32,6 +32,7 @@ class PalimpsestState(TypedDict):
     verification_result: Optional[Dict[str, Any]]
     history: List[AttemptRecord]    # Ordered list of all attempts made so far
     final_status: Optional[str]     # "VERIFIED_EQUIVALENT" | "FAILED" | "REJECTED_UNSAFE"
+    outcome: Optional[str]          # 8-value outcome enum: "verified" | "verified-not-simpler" | "failed-exhausted" | ...
     final_expr: Optional[str]       # Simplified expression on success, None on failure
     final_nodes: Optional[int]      # AST node count of the final expression
     compression_pct: Optional[float]# AST reduction percentage: round((1 - final/orig) * 100, 2)

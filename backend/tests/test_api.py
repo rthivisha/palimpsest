@@ -145,7 +145,8 @@ class TestSSEStreaming:
 
         # Check final event payload
         final_payload = events[-1][1]
-        assert final_payload["status"] == RunOutcome.VERIFIED.value
+        assert final_payload["status"] == "VERIFIED_EQUIVALENT"
+        assert final_payload["outcome"] == RunOutcome.VERIFIED.value
         assert final_payload["final_expr"] == "x + y"
         assert final_payload["obf_nodes"] == 9
         assert final_payload["final_nodes"] == 3
@@ -154,7 +155,7 @@ class TestSSEStreaming:
         assert final_payload["reason"] is None
 
     def test_verified_not_simpler_emits_appropriate_status(self, temp_db):
-        """When candidate is proven equivalent but not simpler than original, final status is verified-not-simpler."""
+        """When candidate is proven equivalent but not simpler than original, status is VERIFIED_EQUIVALENT and outcome is verified-not-simpler."""
         fake_llm = FakeLLMBackend(always_candidate="(x ^ y) + 2 * (x & y)")
         with patch("backend.app.api.routes_run.get_backend", return_value=fake_llm):
             client = TestClient(app)
@@ -165,7 +166,8 @@ class TestSSEStreaming:
             assert response.status_code == 200
             events = parse_sse_events(response.text)
             final_payload = events[-1][1]
-            assert final_payload["status"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
+            assert final_payload["status"] == "VERIFIED_EQUIVALENT"
+            assert final_payload["outcome"] == RunOutcome.VERIFIED_NOT_SIMPLER.value
             assert final_payload["reason"] == "Verified equivalent, but not simpler"
 
     def test_rejected_unsafe_emits_final(self, temp_db):
@@ -190,7 +192,8 @@ class TestSSEStreaming:
         assert run_started_payload["obf_nodes"] == 0
 
         final_payload = events[-1][1]
-        assert final_payload["status"] == RunOutcome.REJECTED_UNSAFE.value
+        assert final_payload["status"] == "REJECTED_UNSAFE"
+        assert final_payload["outcome"] == RunOutcome.REJECTED_UNSAFE.value
         assert final_payload["obf_nodes"] == 0
         assert final_payload["final_expr"] is None
         assert final_payload["attempts"] == 0
@@ -235,7 +238,8 @@ class TestSSEStreaming:
         assert event_names == expected_sequence
 
         final_payload = events[-1][1]
-        assert final_payload["status"] == RunOutcome.FAILED_EXHAUSTED.value
+        assert final_payload["status"] == "FAILED"
+        assert final_payload["outcome"] == RunOutcome.FAILED_EXHAUSTED.value
         assert final_payload["attempts"] == 2
         assert final_payload["final_expr"] is None
         assert "Max iterations reached" in final_payload["reason"]
@@ -343,7 +347,8 @@ class TestSSEStreaming:
         temp_db.sync()
         run_record = temp_db.get_run(run_id)
         assert run_record is not None
-        assert run_record["final_status"] == RunOutcome.DEPTH_REJECTED.value
+        assert run_record["final_status"] == "REJECTED_UNSAFE"
+        assert run_record["outcome"] == RunOutcome.DEPTH_REJECTED.value
         assert run_record["obf_nodes"] == 0
         assert run_record["attempts"] == 0
 
@@ -367,7 +372,8 @@ class TestSSEStreaming:
         ]
         assert events[0][1]["obf_nodes"] == 0
         final_payload = events[-1][1]
-        assert final_payload["status"] == RunOutcome.DEPTH_REJECTED.value
+        assert final_payload["status"] == "REJECTED_UNSAFE"
+        assert final_payload["outcome"] == RunOutcome.DEPTH_REJECTED.value
         assert final_payload["obf_nodes"] == 0
         assert final_payload["attempts"] == 0
         assert "depth exceeds limit" in final_payload["reason"].lower()
@@ -392,7 +398,8 @@ class TestSSEStreaming:
 
             final_events = [data for name, data in events if name == "final"]
             assert len(final_events) == 1
-            assert final_events[0]["status"] == RunOutcome.INVALID.value
+            assert final_events[0]["status"] == "FAILED"
+            assert final_events[0]["outcome"] == RunOutcome.INVALID.value
 
     def test_retry_feedback_format_single_line_and_bounded(self, temp_db, monkeypatch):
         """The 'Error:' text in retry feedback is strictly single-line, <= 200 chars, and excludes raw model output."""
@@ -432,7 +439,7 @@ class TestSSEStreaming:
             "proposal": {"iteration", "raw_output", "think", "candidate"},
             "verification": {"iteration", "candidate", "status", "latency_ms", "witness", "expected", "actual", "diff_bits"},
             "retry": {"iteration", "feedback_message"},
-            "final": {"status", "final_expr", "obf_nodes", "final_nodes", "compression_pct", "total_ms", "attempts", "reason", "backend", "model_name"},
+            "final": {"status", "outcome", "final_expr", "obf_nodes", "final_nodes", "compression_pct", "total_ms", "attempts", "reason", "backend", "model_name"},
         }
 
         client = TestClient(app)
@@ -921,28 +928,49 @@ class TestHostHeaderAndREST:
         assert res_404.status_code == 404
 
     def test_stats_endpoint(self, temp_db):
-        """GET /api/stats computes aggregate synthesis metrics."""
+        """GET /api/stats computes aggregate synthesis metrics, counting both verified and verified-not-simpler as proven equivalent."""
+        # Run 1: Verified equivalent, but NOT simpler (3 nodes -> 3 nodes)
         temp_db.record_run({
             "run_id": "run_1",
             "expression": "x + y",
             "obf_nodes": 3,
             "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified-not-simpler",
             "final_expr": "x + y",
+            "final_nodes": 3,
             "compression_pct": 0.0,
             "attempts": 1,
             "total_ms": 100.0,
             "backend": "fake",
             "max_iterations": 5,
         })
+        # Run 2: Failed exhausted
         temp_db.record_run({
             "run_id": "run_2",
             "expression": "x + 1",
             "obf_nodes": 3,
             "final_status": "FAILED",
+            "outcome": "failed-exhausted",
             "final_expr": None,
+            "final_nodes": None,
             "compression_pct": 0.0,
             "attempts": 5,
             "total_ms": 200.0,
+            "backend": "fake",
+            "max_iterations": 5,
+        })
+        # Run 3: Verified equivalent AND strictly simpler (9 nodes -> 3 nodes)
+        temp_db.record_run({
+            "run_id": "run_3",
+            "expression": "(x ^ y) + 2 * (x & y)",
+            "obf_nodes": 9,
+            "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified",
+            "final_expr": "x + y",
+            "final_nodes": 3,
+            "compression_pct": 66.67,
+            "attempts": 2,
+            "total_ms": 150.0,
             "backend": "fake",
             "max_iterations": 5,
         })
@@ -952,10 +980,13 @@ class TestHostHeaderAndREST:
         res = client.get("/api/stats")
         assert res.status_code == 200
         stats = res.json()
-        assert stats["total_runs"] == 2
-        assert stats["verified_runs"] == 1
+        assert stats["total_runs"] == 3
+        # Both verified and verified-not-simpler count toward verified_runs
+        assert stats["verified_runs"] == 2
+        assert stats["strictly_simpler_runs"] == 1
         assert stats["failed_runs"] == 1
-        assert stats["success_rate_pct"] == 50.0
+        assert stats["success_rate_pct"] == 66.67
+        assert stats["simpler_rate_pct"] == 50.0
 
 
 # ==============================================================================
@@ -1015,10 +1046,10 @@ class TestDatabasePragmasAndIndexes:
         assert r2["temperature"] == 0.3
 
     def test_old_schema_database_migration(self, tmp_path):
-        """Older schema databases without model_name column are migrated on startup, treating old rows as 'unknown'."""
+        """Older schema databases without model_name, outcome, and final_nodes are migrated on startup."""
         db_file = str(tmp_path / "old_schema.sqlite")
         conn = sqlite3.connect(db_file)
-        # Create legacy table without model_name
+        # Create legacy table without model_name, outcome, final_nodes
         conn.execute("""
             CREATE TABLE runs (
                 run_id TEXT PRIMARY KEY,
@@ -1034,10 +1065,18 @@ class TestDatabasePragmasAndIndexes:
                 max_iterations INTEGER NOT NULL
             );
         """)
+        # Row 1: legacy row where candidate equals original (not simpler)
         conn.execute("""
             INSERT INTO runs VALUES (
                 'run_legacy_1', '2026-01-01T00:00:00Z', 'x + y', 3,
                 'VERIFIED_EQUIVALENT', 'x + y', 0.0, 1, 10.5, 'fake', 5
+            );
+        """)
+        # Row 2: legacy row where candidate is strictly simpler
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_2', '2026-01-01T00:01:00Z', '(x ^ y) + 2 * (x & y)', 9,
+                'VERIFIED_EQUIVALENT', 'x + y', 66.67, 2, 20.0, 'fake', 5
             );
         """)
         conn.commit()
@@ -1047,21 +1086,104 @@ class TestDatabasePragmasAndIndexes:
         db = TelemetryDB(db_path=db_file)
         db.init_db()
 
-        # Check migration: column exists
+        # Check migration: columns exist
         with db._get_read_conn() as r_conn:
             cols = [r[1] for r in r_conn.execute("PRAGMA table_info(runs);").fetchall()]
             assert "model_name" in cols
+            assert "outcome" in cols
+            assert "final_nodes" in cols
 
-            # Legacy row must have model_name 'unknown'
-            row = r_conn.execute("SELECT run_id, model_name FROM runs WHERE run_id = 'run_legacy_1';").fetchone()
-            assert row["model_name"] == "unknown"
+            # Legacy rows must have model_name 'unknown' and correctly derived outcomes
+            row1 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_1';").fetchone()
+            assert row1["model_name"] == "unknown"
+            assert row1["outcome"] == "verified-not-simpler"
+            assert row1["final_nodes"] == 3
 
-        # Check get_history and get_run treat old rows as 'unknown'
+            row2 = r_conn.execute("SELECT run_id, model_name, outcome, final_nodes FROM runs WHERE run_id = 'run_legacy_2';").fetchone()
+            assert row2["model_name"] == "unknown"
+            assert row2["outcome"] == "verified"
+            assert row2["final_nodes"] == 3
+
+        # Check get_history and get_run treat old rows properly
         hist = db.get_history()
-        assert len(hist) == 1
+        assert len(hist) == 2
         assert hist[0]["model_name"] == "unknown"
 
         detail = db.get_run("run_legacy_1")
         assert detail is not None
         assert detail["model_name"] == "unknown"
+        assert detail["outcome"] == "verified-not-simpler"
+
+    def test_cors_host_header_and_vite_proxy_integration(self):
+        """Verifies localhost:5173 and 127.0.0.1:5173 pass CORS, the Host check, and the Vite proxy."""
+        client = TestClient(app)
+
+        for dev_origin in ["http://localhost:5173", "http://127.0.0.1:5173"]:
+            # 1. CORS Preflight (OPTIONS)
+            opt_res = client.options(
+                "/api/health",
+                headers={
+                    "Origin": dev_origin,
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "content-type",
+                },
+            )
+            assert opt_res.status_code == 200
+            assert opt_res.headers.get("access-control-allow-origin") == dev_origin
+
+            # 2. CORS Actual GET Request
+            get_res = client.get(
+                "/api/health",
+                headers={"Origin": dev_origin},
+            )
+            assert get_res.status_code == 200
+            assert get_res.headers.get("access-control-allow-origin") == dev_origin
+
+        # 3. Host Check Validation for localhost:5173, 127.0.0.1:5173, localhost:8000, 127.0.0.1:8000
+        for host in ["localhost:5173", "127.0.0.1:5173", "localhost:8000", "127.0.0.1:8000"]:
+            res = client.get("/api/health", headers={"Host": host})
+            assert res.status_code == 200, f"Host {host} failed HostHeaderValidationMiddleware"
+
+        # 4. Vite Proxy Simulation (Host set to 127.0.0.1:8000, X-Forwarded-Host from frontend)
+        res_proxy = client.get(
+            "/api/health",
+            headers={
+                "Host": "127.0.0.1:8000",
+                "X-Forwarded-Host": "localhost:5173",
+                "Origin": "http://localhost:5173",
+            },
+        )
+        assert res_proxy.status_code == 200
+        assert res_proxy.json()["status"] == "ok"
+
+    def test_backend_restart_mid_run_releases_lock_and_errors_client(self, temp_db):
+        """A backend restart or disconnect mid-run cleanly releases run_lock and errors client streams."""
+        from backend.app.api.routes_run import run_lock, active_runs
+
+        # Ensure starting in a clean, unlocked state
+        if run_lock.locked():
+            run_lock.release()
+
+        # Simulate client connecting to SSE stream
+        client = TestClient(app)
+
+        # Acquire lock simulating mid-synthesis state
+        assert run_lock.acquire(blocking=False)
+        assert run_lock.locked()
+
+        # Simulating a new request arriving during lock -> HTTP 429
+        busy_res = client.post("/api/run", json={"expression": "x + y", "max_iterations": 2})
+        assert busy_res.status_code == 429
+        assert "Retry-After" in busy_res.headers
+
+        # Simulate restart lifecycle: server reboots / reloads -> lock released
+        run_lock.release()
+        active_runs.clear()
+
+        # Verify new requests immediately succeed after restart
+        new_res = client.post("/api/run", json={"expression": "x + y", "max_iterations": 2})
+        assert new_res.status_code == 200
+        events = parse_sse_events(new_res.text)
+        assert events[0][0] == "run_started"
+        assert not run_lock.locked()
 

@@ -44,7 +44,8 @@ def parse_ast_node(state: PalimpsestState) -> Dict[str, Any]:
             "obf_nodes": 0,
             "iteration": 0,
             "history": [],
-            "final_status": outcome.value,
+            "final_status": "REJECTED_UNSAFE",
+            "outcome": outcome.value,
             "error_message": f"Security Gate Rejection: {err}",
             "temperature": 0.2,
         }
@@ -56,6 +57,7 @@ def parse_ast_node(state: PalimpsestState) -> Dict[str, Any]:
         "iteration": 0,
         "history": [],
         "final_status": None,
+        "outcome": None,
         "error_message": None,
         "temperature": 0.2,
     }
@@ -188,10 +190,11 @@ def finalize_success_node(state: PalimpsestState) -> Dict[str, Any]:
     outcome = determine_verified_outcome(orig_nodes, final_nodes, is_idempotent)
 
     return {
-        "final_status": outcome.value,
+        "final_status": "VERIFIED_EQUIVALENT",
+        "outcome": outcome.value,
         "final_expr": final_expr,
         "final_nodes": final_nodes,
-        "compression_pct": compression_pct,
+        "compression_pct": max(0.0, compression_pct),
         "error_message": None if outcome == RunOutcome.VERIFIED else "Verified equivalent, but not simpler",
     }
 
@@ -213,7 +216,8 @@ def finalize_fail_node(state: PalimpsestState) -> Dict[str, Any]:
 
     max_iter = state.get("max_iterations", settings.MAX_ITERATIONS)
     return {
-        "final_status": outcome.value,
+        "final_status": "FAILED",
+        "outcome": outcome.value,
         "final_expr": None,
         "final_nodes": None,
         "compression_pct": 0.0,

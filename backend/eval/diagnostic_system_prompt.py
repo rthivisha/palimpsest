@@ -1,6 +1,11 @@
 """Diagnostic script comparing single-turn candidate verification across system prompts.
 
 LABEL: DIAGNOSTIC, NOT A BENCHMARK.
+FORMAT PROVENANCE NOTE: Any diagnostic run output displaying `candidate='x ^ y' -> SAT`
+originates from scripted execution under `FakeLLMBackend` (which returns the near-miss
+`x ^ y` on turn 1 to exercise counterexample generation), serving purely as a format test.
+It is NOT a neural model output from a real SLM run.
+
 This script executes the demo MBA expression (x ^ y) + 2 * (x & y) across 20 trials
 with max_iterations=1 and fixed seeds (seed = 42 + i), comparing:
 1. Empty SYSTEM_PROMPT ("").

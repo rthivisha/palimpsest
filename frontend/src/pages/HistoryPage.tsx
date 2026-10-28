@@ -134,31 +134,39 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
 
       {/* Aggregate Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-3.5">
             <div className="text-xs font-medium text-slate-400 font-mono">TOTAL RUNS</div>
             <div className="text-2xl font-bold font-mono text-slate-100 mt-1">{stats.total_runs}</div>
-            <div className="text-[11px] text-slate-500 mt-1">Recorded in telemetry database</div>
+            <div className="text-[11px] text-slate-500 mt-1">Recorded in database</div>
           </div>
 
-          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4">
-            <div className="text-xs font-medium text-slate-400 font-mono">VERIFIED BY Z3</div>
+          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-3.5">
+            <div className="text-xs font-medium text-slate-400 font-mono">PROVEN EQUIVALENT</div>
             <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
               {stats.verified_runs}{' '}
               <span className="text-xs font-normal text-slate-400">({stats.success_rate_pct}%)</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-1">QF_BV mathematical proofs</div>
+            <div className="text-[11px] text-slate-500 mt-1">QF_BV proofs (UNSAT)</div>
           </div>
 
-          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4">
-            <div className="text-xs font-medium text-slate-400 font-mono">AVG LATENCY</div>
+          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-3.5">
+            <div className="text-xs font-medium text-slate-400 font-mono">SIMPLER RATE</div>
             <div className="text-2xl font-bold font-mono text-cyan-400 mt-1">
-              {stats.avg_total_ms} <span className="text-xs font-normal text-slate-400">ms</span>
+              {stats.simpler_rate_pct !== undefined ? `${stats.simpler_rate_pct}%` : 'N/A'}
             </div>
-            <div className="text-[11px] text-slate-500 mt-1">Total runtime per synthesis</div>
+            <div className="text-[11px] text-slate-500 mt-1">Proven runs with AST reduction</div>
           </div>
 
-          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-4">
+          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-3.5">
+            <div className="text-xs font-medium text-slate-400 font-mono">AVG LATENCY</div>
+            <div className="text-2xl font-bold font-mono text-cyan-300 mt-1">
+              {stats.avg_latency_ms ?? stats.avg_total_ms ?? 0} <span className="text-xs font-normal text-slate-400">ms</span>
+            </div>
+            <div className="text-[11px] text-slate-500 mt-1">Average runtime per synthesis</div>
+          </div>
+
+          <div className="bg-cyber-surface border border-cyber-border rounded-xl p-3.5">
             <div className="text-xs font-medium text-slate-400 font-mono">AVG CEGIS LOOPS</div>
             <div className="text-2xl font-bold font-mono text-amber-400 mt-1">
               {stats.avg_attempts} <span className="text-xs font-normal text-slate-400">turns</span>
@@ -306,12 +314,25 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
               </thead>
               <tbody className="divide-y divide-cyber-border/60">
                 {history.map((run) => {
-                  const isVer = run.final_status === 'verified' || run.final_status === 'VERIFIED_EQUIVALENT';
-                  const isNotSimpler = run.final_status === 'verified-not-simpler';
-                  const isFail = run.final_status === 'failed-exhausted' || run.final_status === 'FAILED';
-                  const isUnsafe = run.final_status === 'rejected-unsafe' || run.final_status === 'depth-rejected' || run.final_status === 'REJECTED_UNSAFE';
-                  const isTimeout = run.final_status === 'unknown-timeout';
-                  const isInvalid = run.final_status === 'invalid';
+                  const effectiveOutcome = run.outcome || run.final_status;
+                  const isVer =
+                    effectiveOutcome === 'verified' ||
+                    (run.final_status === 'VERIFIED_EQUIVALENT' && (run.compression_pct ?? 0) > 0);
+                  const isNotSimpler =
+                    effectiveOutcome === 'verified-not-simpler' ||
+                    (run.final_status === 'VERIFIED_EQUIVALENT' && (run.compression_pct ?? 0) <= 0);
+                  const isTimeout = effectiveOutcome === 'unknown-timeout';
+                  const isInvalid = effectiveOutcome === 'invalid';
+                  const isDepthReject = effectiveOutcome === 'depth-rejected';
+                  const isUnsafe =
+                    effectiveOutcome === 'rejected-unsafe' || run.final_status === 'REJECTED_UNSAFE';
+                  const isCancelled =
+                    effectiveOutcome === 'cancelled' || run.final_status === 'CANCELLED';
+                  const isError =
+                    effectiveOutcome === 'error' || run.final_status === 'ERROR';
+                  const isFail =
+                    effectiveOutcome === 'failed-exhausted' || run.final_status === 'FAILED';
+                  const clampedComp = Math.max(0, run.compression_pct ?? 0);
 
                   return (
                     <tr key={run.run_id} className="hover:bg-slate-900/40 transition-colors">
@@ -352,13 +373,25 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 border border-purple-500/40 text-purple-300">
                             INVALID
                           </span>
+                        ) : isDepthReject ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300">
+                            DEPTH REJECTED
+                          </span>
                         ) : isUnsafe ? (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300">
                             UNSAFE
                           </span>
+                        ) : isCancelled ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 border border-slate-600 text-slate-400">
+                            CANCELLED
+                          </span>
+                        ) : isError ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 border border-rose-600 text-rose-400">
+                            ERROR
+                          </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400">
-                            {run.final_status}
+                            {effectiveOutcome}
                           </span>
                         )}
                       </td>
@@ -366,7 +399,7 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                         {run.final_expr || '-'}
                       </td>
                       <td className="py-3 px-4 text-slate-300">
-                        {run.compression_pct > 0 ? `-${run.compression_pct}%` : '-'}
+                        {clampedComp > 0 ? `-${clampedComp}%` : '-'}
                       </td>
                       <td className="py-3 px-4 text-slate-400">{run.attempts}</td>
                       <td className="py-3 px-4 text-slate-400 whitespace-nowrap">{run.total_ms} ms</td>

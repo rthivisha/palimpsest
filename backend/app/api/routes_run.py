@@ -95,7 +95,8 @@ def run_synthesis_worker(
             total_ms = round((time.perf_counter() - start_time) * 1000, 2)
             outcome = RunOutcome.DEPTH_REJECTED if "depth" in str(err_msg).lower() else RunOutcome.REJECTED_UNSAFE
             dispatch("final", {
-                "status": outcome.value,
+                "status": "REJECTED_UNSAFE",
+                "outcome": outcome.value,
                 "final_expr": None,
                 "obf_nodes": 0,
                 "final_nodes": None,
@@ -108,7 +109,8 @@ def run_synthesis_worker(
             })
             telemetry_db.update_run({
                 "run_id": run_id,
-                "final_status": outcome.value,
+                "final_status": "REJECTED_UNSAFE",
+                "outcome": outcome.value,
                 "total_ms": total_ms,
                 "attempts": 0,
             })
@@ -225,14 +227,16 @@ def run_synthesis_worker(
                 # --- Finalize Success ---
                 dispatch("node_started", {"node": "finalize_success"})
                 cand_nodes = count_nodes(candidate or "")
-                compression_pct = round((1.0 - (cand_nodes / max(obf_nodes, 1))) * 100, 2)
+                raw_comp = (1.0 - (cand_nodes / max(obf_nodes, 1))) * 100
+                compression_pct = round(max(0.0, raw_comp), 2)
                 total_ms = round((time.perf_counter() - start_time) * 1000, 2)
                 dispatch("node_finished", {"node": "finalize_success"})
 
                 outcome = determine_verified_outcome(obf_nodes, cand_nodes, is_idempotent=False)
 
                 dispatch("final", {
-                    "status": outcome.value,
+                    "status": "VERIFIED_EQUIVALENT",
+                    "outcome": outcome.value,
                     "final_expr": candidate,
                     "obf_nodes": obf_nodes,
                     "final_nodes": cand_nodes,
@@ -245,8 +249,10 @@ def run_synthesis_worker(
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
-                    "final_status": outcome.value,
+                    "final_status": "VERIFIED_EQUIVALENT",
+                    "outcome": outcome.value,
                     "final_expr": candidate,
+                    "final_nodes": cand_nodes,
                     "compression_pct": compression_pct,
                     "attempts": iteration,
                     "total_ms": total_ms,
@@ -286,7 +292,8 @@ def run_synthesis_worker(
                     fail_reason = "Max iterations reached without proving equivalence"
 
                 dispatch("final", {
-                    "status": outcome.value,
+                    "status": "FAILED",
+                    "outcome": outcome.value,
                     "final_expr": None,
                     "obf_nodes": obf_nodes,
                     "final_nodes": None,
@@ -299,7 +306,8 @@ def run_synthesis_worker(
                 })
                 telemetry_db.update_run({
                     "run_id": run_id,
-                    "final_status": outcome.value,
+                    "final_status": "FAILED",
+                    "outcome": outcome.value,
                     "attempts": iteration,
                     "total_ms": total_ms,
                 })
@@ -311,6 +319,7 @@ def run_synthesis_worker(
             telemetry_db.update_run({
                 "run_id": run_id,
                 "final_status": "CANCELLED",
+                "outcome": "cancelled",
                 "total_ms": total_ms,
             })
         else:
@@ -320,6 +329,7 @@ def run_synthesis_worker(
             telemetry_db.update_run({
                 "run_id": run_id,
                 "final_status": "ERROR",
+                "outcome": "error",
                 "total_ms": total_ms,
             })
     finally:

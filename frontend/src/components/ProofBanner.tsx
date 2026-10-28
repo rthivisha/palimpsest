@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShieldCheck, ShieldAlert, Copy, Check } from 'lucide-react';
 import { FinalPayload } from '../types';
 import { ExplainTooltip } from './ExplainTooltip';
+import { clampCompressionPct, isExpressionAlreadyMinimal } from '../utils/compression';
 
 interface ProofBannerProps {
   originalExpr: string;
@@ -18,10 +19,29 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
 
   if (!finalResult) return null;
 
-  const isVerified = finalResult.status === 'verified' || finalResult.status === 'VERIFIED_EQUIVALENT';
-  const isNotSimpler = finalResult.status === 'verified-not-simpler';
-  const isUnsafe = finalResult.status === 'rejected-unsafe' || finalResult.status === 'depth-rejected' || finalResult.status === 'REJECTED_UNSAFE';
-  const isCancelled = finalResult.status === 'CANCELLED';
+  const isNotSimpler =
+    finalResult.outcome === 'verified-not-simpler' ||
+    finalResult.status === 'verified-not-simpler';
+  const isVerified =
+    !isNotSimpler &&
+    (finalResult.status === 'VERIFIED_EQUIVALENT' ||
+      finalResult.status === 'verified' ||
+      finalResult.outcome === 'verified');
+  const isUnsafe =
+    finalResult.status === 'REJECTED_UNSAFE' ||
+    finalResult.status === 'rejected-unsafe' ||
+    finalResult.status === 'depth-rejected' ||
+    finalResult.outcome === 'rejected-unsafe' ||
+    finalResult.outcome === 'depth-rejected' ||
+    finalResult.outcome === 'unconvertible';
+  const isCancelled =
+    finalResult.status === 'CANCELLED' || finalResult.outcome === 'cancelled';
+
+  const isAlreadyMinimal = isExpressionAlreadyMinimal(
+    originalExpr,
+    finalResult.final_expr
+  );
+  const clampedCompression = clampCompressionPct(finalResult.compression_pct);
 
   const handleCopy = () => {
     if (finalResult.final_expr) {
@@ -88,9 +108,15 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-amber-300 font-bold">{finalResult.final_nodes} nodes</span>
-                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-bold">
-                  {finalResult.compression_pct}%
-                </span>
+                {isAlreadyMinimal ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
+                    Already minimal
+                  </span>
+                ) : (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-bold">
+                    {clampedCompression}%
+                  </span>
+                )}
               </div>
             </div>
 
@@ -171,9 +197,15 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
               </span>
               <div className="flex items-center gap-2">
                 <span className="text-emerald-300 font-bold">{finalResult.final_nodes} nodes</span>
-                <span className="text-xs px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 font-bold">
-                  -{finalResult.compression_pct}%
-                </span>
+                {isAlreadyMinimal ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
+                    Already minimal
+                  </span>
+                ) : (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-bold">
+                    -{clampedCompression}%
+                  </span>
+                )}
               </div>
             </div>
 
@@ -202,35 +234,20 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           <ShieldAlert className="w-5 h-5" />
         </div>
         <div>
-          <div className="text-sm font-bold font-mono text-rose-300 tracking-wide">
-            {isUnsafe
-              ? 'REJECTED BY SECURITY GATE'
-              : isCancelled
-              ? 'EXECUTION CANCELLED'
-              : 'NOT VERIFIED. No answer accepted.'}
+          <div className="text-sm font-bold font-mono text-rose-300 tracking-wide flex items-center gap-1.5">
+            <span>
+              {isUnsafe
+                ? 'SECURITY GATE REJECTION (BLOCKED)'
+                : isCancelled
+                ? 'SYNTHESIS CANCELLED BY USER'
+                : 'NOT VERIFIED (FAILED)'}
+            </span>
+            <ExplainTooltip topic="cegis" explainMode={explainMode} inline />
           </div>
           <p className="text-xs text-slate-300 mt-0.5">
-            {isUnsafe
-              ? finalResult.reason || 'Expression violated AST whitelist or depth limits. Execution aborted safely.'
-              : isCancelled
-              ? 'Synthesis run was interrupted by client disconnect.'
-              : (finalResult.reason
-                  ? `${finalResult.reason}. Candidate discarded.`
-                  : 'Proposer was unable to propose an equivalent expression within the iteration budget. Candidate discarded.')}
+            {finalResult.reason || 'Verification budget exhausted without equivalence proof.'}
           </p>
         </div>
-      </div>
-
-      <div className="flex items-center gap-4 text-xs font-mono text-slate-400 pt-2 border-t border-rose-900/40 flex-wrap">
-        {finalResult.backend && (
-          <div className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-rose-300 font-mono text-xs">
-            <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
-            {finalResult.model_name && <span className="text-slate-400"> · {finalResult.model_name}</span>}
-          </div>
-        )}
-        <div>Total time: <span className="text-slate-200">{finalResult.total_ms} ms</span></div>
-        <div>Attempts made: <span className="text-slate-200">{finalResult.attempts}</span></div>
-        <div>Obfuscated complexity: <span className="text-slate-200">{finalResult.obf_nodes} nodes</span></div>
       </div>
     </div>
   );

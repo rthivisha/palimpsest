@@ -42,3 +42,4 @@ def determine_verified_outcome(
     if is_idempotent:
         return RunOutcome.VERIFIED if cand_nodes <= obf_nodes else RunOutcome.VERIFIED_NOT_SIMPLER
     return RunOutcome.VERIFIED if cand_nodes < obf_nodes else RunOutcome.VERIFIED_NOT_SIMPLER
+

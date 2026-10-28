@@ -314,20 +314,20 @@ The event stream contract freezes the emission order: **payload events are emitt
      - `node_finished`: `{"node": "verify"}`
    - `node_started`: `{"node": "finalize_success"}`
    - `node_finished`: `{"node": "finalize_success"}`
-   - `final`: `{status: "VERIFIED_EQUIVALENT", final_expr, obf_nodes, final_nodes, compression_pct, total_ms, attempts, reason: null, backend, model_name}`
+   - `final`: `{status: "VERIFIED_EQUIVALENT", outcome: "verified" | "verified-not-simpler", final_expr, obf_nodes, final_nodes, compression_pct, total_ms, attempts, reason: null, backend, model_name}`
 
 2. Failing Loop (Max Iterations Reached):
    - Iterations $1 \dots K$ execute propose and verify.
    - Retries are emitted after iterations $1 \dots K-1$; **no trailing retry** is emitted after the final iteration.
    - `node_started`: `{"node": "finalize_fail"}`
    - `node_finished`: `{"node": "finalize_fail"}`
-   - `final`: `{status: "FAILED", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "...", backend, model_name}`
+   - `final`: `{status: "FAILED", outcome: "failed-exhausted" | "unknown-timeout" | "invalid", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "...", backend, model_name}`
 
 3. Unsafe Input Sequence (`REJECTED_UNSAFE`):
    - `run_started`: `{run_id, expression, obf_nodes: 0, max_iterations, backend, model_name}`
    - `node_started`: `{"node": "parse_ast"}`
    - `node_finished`: `{"node": "parse_ast"}`
-   - `final`: `{status: "REJECTED_UNSAFE", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>", backend, model_name}`
+   - `final`: `{status: "REJECTED_UNSAFE", outcome: "rejected-unsafe" | "depth-rejected" | "unconvertible", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>", backend, model_name}`
 
 4. Backend Failure (Crashed or Unreachable Backend):
    - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend, model_name}`
@@ -335,12 +335,29 @@ The event stream contract freezes the emission order: **payload events are emitt
    - `node_finished`: `{"node": "parse_ast"}`
    - `node_started`: `{"node": "propose"}`
    - `error`: `{"error": "<backend_error_message>"}`
-   - Telemetry records run with `final_status = "ERROR"`.
+   - Telemetry records run with `final_status = "ERROR", outcome = "error"`.
 
 5. Stream Termination Invariant:
    - Exactly **ONE** of `final` OR `error` terminates the stream, followed by stream closure. They are mutually exclusive.
 
-### 7.3 String Serialization Contract
+### 7.3 State, Outcome, and Status Mapping Specification
+
+PALIMPSEST separates macro run-level lifecycle status (`final.status` / `runs.final_status`, preserving the frozen blueprint contract) from granular row-level and operational outcomes (`final.outcome` / `runs.outcome`, carrying the 8-value outcome enum plus the two run-level terminal states `CANCELLED` and `ERROR`).
+
+| Internal Worker State / Condition | `final.status` (Blueprint SSE) | `final.outcome` (SSE additive) | DB `runs.final_status` | DB `runs.outcome` | UI Label / Display |
+|---|---|---|---|---|---|
+| Equivalence proven (`UNSAT`) and candidate strictly simpler (`cand_nodes < obf_nodes` or idempotent `<=`) | `VERIFIED_EQUIVALENT` | `verified` | `VERIFIED_EQUIVALENT` | `verified` | **EQUIVALENCE PROVEN** (Green Banner, `PROVEN` badge) |
+| Equivalence proven (`UNSAT`), but candidate not simpler (`cand_nodes >= obf_nodes` or idempotent `>`) | `VERIFIED_EQUIVALENT` | `verified-not-simpler` | `VERIFIED_EQUIVALENT` | `verified-not-simpler` | **Verified equivalent, but not simpler** (Amber Banner, `NOT SIMPLER` badge) |
+| Max synthesis retry limit reached without mathematical proof | `FAILED` | `failed-exhausted` | `FAILED` | `failed-exhausted` | **NOT VERIFIED (FAILED)** (Red Banner, `FAILED` badge) |
+| Z3 SMT solver timeout or resource limit reached (`UNKNOWN`) | `FAILED` | `unknown-timeout` | `FAILED` | `unknown-timeout` | **SOLVER TIMEOUT** (Orange Banner, `TIMEOUT` badge) |
+| Candidate model proposal fails Python AST syntax parsing or safety checks | `FAILED` | `invalid` | `FAILED` | `invalid` | **INVALID SYNTAX** (Purple Banner, `INVALID` badge) |
+| Input expression rejected by security gate (disallowed AST nodes, length > 5000) | `REJECTED_UNSAFE` | `rejected-unsafe` | `REJECTED_UNSAFE` | `rejected-unsafe` | **SECURITY GATE REJECTION** (Red Banner, `UNSAFE` badge) |
+| Input expression exceeds maximum AST nesting depth (`MAX_AST_DEPTH = 100`) | `REJECTED_UNSAFE` | `depth-rejected` | `REJECTED_UNSAFE` | `depth-rejected` | **MAX AST DEPTH EXCEEDED** (Red Banner, `DEPTH REJECTED` badge) |
+| Input expression cannot be converted to AST or Z3 bit-vector representation | `REJECTED_UNSAFE` | `unconvertible` | `REJECTED_UNSAFE` | `unconvertible` | **UNCONVERTIBLE EXPRESSION** (Slate Banner, `UNCONVERTIBLE` badge) |
+| Client disconnected or user pressed abort mid-run (Run-Level State) | *(Stream closed)* | *(Stream closed)* | `CANCELLED` | `cancelled` | **CANCELLED** (Slate Badge, `CANCELLED`) |
+| Unhandled exception or LLM daemon crash mid-run (Run-Level State) | *(error event)* | *(error event)* | `ERROR` | `error` | **SYNTHESIS ERROR** (Red Banner, `ERROR`) |
+
+### 7.4 String Serialization Contract
 - **SSE & REST JSON**: All 64-bit integer values (`expected`, `actual`, and all dictionary values in `witness`) are serialized strictly as **strings** (e.g. `"expected": "2"`, `"actual": "0"`, `"witness": {"x": "1", "y": "1"}`) to eliminate JavaScript IEEE 754 precision truncation on values $> 2^{53}-1$.
 - **Prompt Builder**: Preserves raw Python integer types (`{'x': 1, 'y': 1}`, `Expected: 2, Actual: 0`) character-for-character matching the teammate's training data.
 
@@ -367,7 +384,9 @@ The event stream contract freezes the emission order: **payload events are emitt
       expression TEXT NOT NULL,
       obf_nodes INTEGER NOT NULL,
       final_status TEXT NOT NULL,
+      outcome TEXT,
       final_expr TEXT,
+      final_nodes INTEGER,
       compression_pct REAL,
       attempts INTEGER NOT NULL,
       total_ms REAL NOT NULL,
@@ -392,8 +411,13 @@ The event stream contract freezes the emission order: **payload events are emitt
 
   CREATE INDEX IF NOT EXISTS idx_attempts_run_id ON attempts(run_id);
   ```
-- **Startup Migration**:
-  On daemon initialization, `init_db()` inspects `PRAGMA table_info(runs)`. If the `model_name` column is missing (from older schemas), it executes `ALTER TABLE runs ADD COLUMN model_name TEXT DEFAULT 'unknown';` and backfills legacy rows (`UPDATE runs SET model_name = 'unknown' WHERE model_name IS NULL OR model_name = '';`). REST queries (`get_history`, `get_run`) fall back to `"unknown"` when reading pre-migration databases.
+- **Startup Migration & Telemetry Stats**:
+  On daemon initialization, `init_db()` inspects `PRAGMA table_info(runs)`:
+  1. If `model_name` is missing, executes `ALTER TABLE runs ADD COLUMN model_name TEXT DEFAULT 'unknown';`.
+  2. If `final_nodes` is missing, executes `ALTER TABLE runs ADD COLUMN final_nodes INTEGER;`.
+  3. If `outcome` is missing, executes `ALTER TABLE runs ADD COLUMN outcome TEXT;`.
+  4. Computes `outcome` for legacy rows where `outcome` is null from stored `final_nodes`, `obf_nodes`, and `final_expr`, and normalizes legacy `final_status` values back to blueprint constants (`VERIFIED_EQUIVALENT`, `FAILED`, `REJECTED_UNSAFE`).
+  5. In `/api/stats`, both `verified` and `verified-not-simpler` count toward `verified_runs` (proven equivalent), while `simpler_rate_pct` is reported separately as the ratio of strictly simpler runs to total verified runs (`strictly_simpler_runs / verified_runs * 100`).
 - `witness_json` holds a JSON string with stringified 64-bit integer values.
 
 ---

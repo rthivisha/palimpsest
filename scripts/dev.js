@@ -16,7 +16,13 @@ if (process.platform === 'win32') {
   extraEnv.COMSPEC = cmdPath;
 }
 
-const { result } = concurrently(
+console.log('======================================================================');
+console.log('  PALIMPSEST De-obfuscation Engine Dev Servers Starting');
+console.log('  - Frontend:    http://127.0.0.1:5173 (or http://localhost:5173)');
+console.log('  - Backend API: http://127.0.0.1:8000 (Docs: http://127.0.0.1:8000/docs)');
+console.log('======================================================================');
+
+const { result, commands } = concurrently(
   [
     {
       command: 'npm run dev:backend',
@@ -32,11 +38,38 @@ const { result } = concurrently(
     },
   ],
   {
-    killOthersOn: ['failure'],
+    killOthersOn: ['failure', 'success'],
   }
 );
 
-result.catch((_err) => {
-  // Exit cleanly if child was terminated
-  process.exit(1);
+commands.forEach((cmd) => {
+  cmd.close.subscribe((info) => {
+    if (info.exitCode !== 0 && !info.killed) {
+      console.error(
+        `\n[PALIMPSEST DEV ERROR] Server '${cmd.name}' exited with failure code: ${info.exitCode}. Stopping both servers.\n`
+      );
+    } else if (!info.killed) {
+      console.log(
+        `\n[PALIMPSEST DEV] Server '${cmd.name}' exited cleanly (code 0). Stopping both servers.\n`
+      );
+    }
+  });
 });
+
+result.then(
+  () => {
+    process.exit(0);
+  },
+  (err) => {
+    if (Array.isArray(err)) {
+      for (const e of err) {
+        if (!e.killed && e.exitCode !== 0) {
+          console.error(
+            `[PALIMPSEST DEV] Process failure: '${e.command ? e.command.name : 'unknown'}' exited with code ${e.exitCode}.`
+          );
+        }
+      }
+    }
+    process.exit(1);
+  }
+);

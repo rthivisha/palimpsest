@@ -3,6 +3,13 @@
  * Matches frozen API payloads and database schema contracts.
  */
 
+export type BlueprintStatus =
+  | 'VERIFIED_EQUIVALENT'
+  | 'FAILED'
+  | 'REJECTED_UNSAFE'
+  | 'CANCELLED'
+  | 'ERROR';
+
 export type RunOutcome =
   | 'verified'
   | 'verified-not-simpler'
@@ -12,13 +19,13 @@ export type RunOutcome =
   | 'rejected-unsafe'
   | 'depth-rejected'
   | 'unconvertible'
+  | 'cancelled'
+  | 'error'
   | 'VERIFIED_EQUIVALENT'
   | 'FAILED'
-  | 'REJECTED_UNSAFE'
-  | 'CANCELLED'
-  | 'ERROR';
+  | 'REJECTED_UNSAFE';
 
-export type RunStatus = RunOutcome | 'IDLE' | 'RUNNING';
+export type RunStatus = BlueprintStatus | RunOutcome | 'IDLE' | 'RUNNING';
 
 export type VerificationStatus =
   | 'QF_BV_UNSAT_64BIT_VERIFIED'
@@ -51,7 +58,8 @@ export interface RunStartedPayload {
 }
 
 export interface FinalPayload {
-  status: RunStatus;
+  status: BlueprintStatus | string;
+  outcome?: RunOutcome | string;
   final_expr: string | null;
   obf_nodes: number;
   final_nodes: number | null;
@@ -68,8 +76,10 @@ export interface RunSummary {
   timestamp: string;
   expression: string;
   obf_nodes: number;
-  final_status: RunStatus;
+  final_status: string;
+  outcome?: string;
   final_expr: string | null;
+  final_nodes?: number | null;
   compression_pct: number;
   attempts: number;
   total_ms: number;
@@ -85,9 +95,13 @@ export interface RunDetail extends RunSummary {
 export interface StatsResponse {
   total_runs: number;
   verified_runs: number;
+  strictly_simpler_runs?: number;
   failed_runs: number;
   success_rate_pct: number;
-  avg_total_ms: number;
+  simpler_rate_pct?: number;
+  avg_compression_pct?: number;
+  avg_latency_ms?: number;
+  avg_total_ms?: number;
   avg_attempts: number;
 }
 
@@ -98,8 +112,8 @@ export interface ExampleExpr {
   category?: string;
   expression: string;
   expected_simplified: string;
-  description: string;
-  variables: string[];
+  description?: string;
+  variables?: string[];
   transformation_steps?: string[];
 }
 
