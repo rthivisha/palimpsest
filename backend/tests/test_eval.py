@@ -155,3 +155,4 @@ class TestEvalHarness:
 
         assert summary["total_evaluated"] == 7
         assert "SUCCESS_PROVEN" in summary["outcomes"]
+

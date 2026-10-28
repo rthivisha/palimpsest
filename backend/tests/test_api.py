@@ -14,6 +14,7 @@ Covers:
 """
 import asyncio
 import json
+import sqlite3
 import threading
 import time
 from typing import Any, Dict, List, Tuple
@@ -24,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.api.routes_run import run_lock
+from backend.app.config import settings
 from backend.app.core.verifier import verify_equivalence
 from backend.app.llm.base import BaseLLMBackend, LLMBackendError
 from backend.app.llm.fake import FakeLLMBackend
@@ -245,6 +247,35 @@ class TestSSEStreaming:
 
             error_payload = events[-1][1]
             assert "Ollama daemon unreachable" in error_payload["error"]
+
+    def test_unreachable_ollama_emits_one_error_event_with_no_fake_fallback(self, temp_db, monkeypatch):
+        """When PALIMPSEST_BACKEND=ollama and Ollama is unreachable, exactly one error event is emitted with no fallback to fake."""
+        monkeypatch.setattr(settings, "PALIMPSEST_BACKEND", "ollama")
+        monkeypatch.setattr(settings, "OLLAMA_BASE_URL", "http://127.0.0.1:59999")
+        client = TestClient(app)
+
+        with patch("httpx.Client.stream", side_effect=httpx.ConnectError("Connection refused")):
+            response = client.post(
+                "/api/run",
+                json={"expression": "x + y", "max_iterations": 3},
+            )
+            assert response.status_code == 200
+            events = parse_sse_events(response.text)
+
+            event_names = [e[0] for e in events]
+            assert event_names == [
+                "run_started",
+                "node_started",   # parse_ast
+                "node_finished",  # parse_ast
+                "node_started",   # propose
+                "error",
+            ]
+            error_payload = events[-1][1]
+            assert "Ollama is not running at http://127.0.0.1:59999" in error_payload["error"]
+            # Assert no fake fallback occurred: no proposals, no verifications, backend recorded as ollama
+            assert "proposal" not in event_names
+            assert "verification" not in event_names
+            assert events[0][1]["backend"] == "ollama"
 
     def test_fake_scenario_garbage_mode(self, temp_db, monkeypatch):
         """FAKE_SCENARIO=garbage produces unparseable syntax, which becomes an INVALID attempt."""
@@ -966,4 +997,55 @@ class TestDatabasePragmasAndIndexes:
         r2 = propose(s2)
         # Temperature is bumped from 0.2 to 0.3
         assert r2["temperature"] == 0.3
+
+    def test_old_schema_database_migration(self, tmp_path):
+        """Older schema databases without model_name column are migrated on startup, treating old rows as 'unknown'."""
+        db_file = str(tmp_path / "old_schema.sqlite")
+        conn = sqlite3.connect(db_file)
+        # Create legacy table without model_name
+        conn.execute("""
+            CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                expression TEXT NOT NULL,
+                obf_nodes INTEGER NOT NULL,
+                final_status TEXT NOT NULL,
+                final_expr TEXT,
+                compression_pct REAL,
+                attempts INTEGER NOT NULL,
+                total_ms REAL NOT NULL,
+                backend TEXT NOT NULL,
+                max_iterations INTEGER NOT NULL
+            );
+        """)
+        conn.execute("""
+            INSERT INTO runs VALUES (
+                'run_legacy_1', '2026-01-01T00:00:00Z', 'x + y', 3,
+                'VERIFIED_EQUIVALENT', 'x + y', 0.0, 1, 10.5, 'fake', 5
+            );
+        """)
+        conn.commit()
+        conn.close()
+
+        # Initialize TelemetryDB on the old-schema file
+        db = TelemetryDB(db_path=db_file)
+        db.init_db()
+
+        # Check migration: column exists
+        with db._get_read_conn() as r_conn:
+            cols = [r[1] for r in r_conn.execute("PRAGMA table_info(runs);").fetchall()]
+            assert "model_name" in cols
+
+            # Legacy row must have model_name 'unknown'
+            row = r_conn.execute("SELECT run_id, model_name FROM runs WHERE run_id = 'run_legacy_1';").fetchone()
+            assert row["model_name"] == "unknown"
+
+        # Check get_history and get_run treat old rows as 'unknown'
+        hist = db.get_history()
+        assert len(hist) == 1
+        assert hist[0]["model_name"] == "unknown"
+
+        detail = db.get_run("run_legacy_1")
+        assert detail is not None
+        assert detail["model_name"] == "unknown"
 

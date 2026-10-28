@@ -63,6 +63,7 @@ class FakeLLMBackend(BaseLLMBackend):
         temperature: float = 0.2,
         max_tokens: int = 512,
         should_cancel: Optional[Callable[[], bool]] = None,
+        seed: Optional[int] = None,
     ) -> str:
         """Returns scripted completion based on message count, scenario, or provided sequence."""
         if should_cancel and should_cancel():
@@ -108,9 +109,10 @@ class FakeLLMBackend(BaseLLMBackend):
             return f"<think>\nProposing candidate {self.call_count}: {cand}\n</think>\n{cand}"
 
         # 5. Default 2-turn demo:
-        # If messages list only has user prompt (1 message), return turn 1 near miss: x ^ y
-        # If messages list has feedback (>= 3 messages), return turn 2 fix: x + y
-        if len(messages) <= 1:
+        # If messages list has no feedback turn, return turn 1 near miss: x ^ y
+        # If messages list contains Z3 counterexample feedback, return turn 2 fix: x + y
+        has_feedback = any("Z3_VERIFICATION_FAILED" in m.get("content", "") for m in messages)
+        if not has_feedback:
             return DEFAULT_THINK_TURN1
         else:
             return DEFAULT_THINK_TURN2

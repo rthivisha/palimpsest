@@ -19,6 +19,8 @@ interface CommandCenterProps {
   onCancelRun: () => void;
   explainMode: boolean;
   fakeHint?: string | null;
+  isModelReachable?: boolean;
+  modelUnreachableReason?: string | null;
 }
 
 const PRESETS = [
@@ -66,6 +68,8 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   onCancelRun,
   explainMode,
   fakeHint,
+  isModelReachable = true,
+  modelUnreachableReason = null,
 }) => {
   const [copiedPreset, setCopiedPreset] = useState<string | null>(null);
 
@@ -77,7 +81,7 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expression.trim() || isRunning || is429Blocked) return;
+    if (!expression.trim() || isRunning || is429Blocked || isModelReachable === false) return;
     onStartRun(expression, maxIterations);
   };
 
@@ -178,6 +182,12 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               <span>{fakeHint}</span>
             </p>
           )}
+          {isModelReachable === false && (
+            <p className="mt-2 text-[11px] font-mono text-rose-300 flex items-center gap-1.5 bg-rose-950/40 border border-rose-500/40 px-2.5 py-1.5 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+              <span>{modelUnreachableReason || 'Model service is unreachable. Make sure local inference engine is running.'}</span>
+            </p>
+          )}
         </div>
 
         {/* Controls: Iterations slider & Action buttons */}
@@ -228,16 +238,23 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
             <button
               type="submit"
-              disabled={isRunning || is429Blocked || !expression.trim()}
+              disabled={isRunning || is429Blocked || !expression.trim() || isModelReachable === false}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-bold font-mono tracking-wider transition-all ${
-                is429Blocked
+                isModelReachable === false
+                  ? 'bg-rose-950/40 border border-rose-600/50 text-rose-400 cursor-not-allowed'
+                  : is429Blocked
                   ? 'bg-amber-950/40 border border-amber-600/50 text-amber-400 cursor-not-allowed'
                   : isRunning
                   ? 'bg-cyan-950 border border-cyan-500/40 text-cyan-300 cursor-wait'
                   : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:shadow-[0_0_20px_rgba(6,182,212,0.6)] cursor-pointer'
               } disabled:opacity-50`}
             >
-              {is429Blocked ? (
+              {isModelReachable === false ? (
+                <>
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                  <span>MODEL OFFLINE</span>
+                </>
+              ) : is429Blocked ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
                   <span>WAIT ({retryCountdown}s)</span>

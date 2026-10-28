@@ -100,6 +100,7 @@ export interface SystemHealth {
   backend: string;
   model_name: string;
   model_reachable?: boolean;
+  model_unreachable_reason?: string | null;
   fake_hint?: string | null;
   z3_version: string;
   z3_logic: string;

@@ -72,7 +72,8 @@ class TelemetryDB:
                 cursor = conn.execute("PRAGMA table_info(runs);")
                 columns = [row[1] for row in cursor.fetchall()]
                 if "model_name" not in columns:
-                    conn.execute("ALTER TABLE runs ADD COLUMN model_name TEXT;")
+                    conn.execute("ALTER TABLE runs ADD COLUMN model_name TEXT DEFAULT 'unknown';")
+                conn.execute("UPDATE runs SET model_name = 'unknown' WHERE model_name IS NULL OR model_name = '';")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS attempts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,7 +271,13 @@ class TelemetryDB:
                 query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?;"
                 params.extend([limit, offset])
                 cur = conn.execute(query, tuple(params))
-                return [dict(row) for row in cur.fetchall()]
+                rows = []
+                for row in cur.fetchall():
+                    d = dict(row)
+                    if not d.get("model_name"):
+                        d["model_name"] = "unknown"
+                    rows.append(d)
+                return rows
         except Exception as exc:
             logger.error("Error reading run history: %s", exc)
             return []
@@ -292,6 +299,8 @@ class TelemetryDB:
                     return None
 
                 run_dict = dict(run_row)
+                if not run_dict.get("model_name"):
+                    run_dict["model_name"] = "unknown"
 
                 cur_att = conn.execute("""
                     SELECT iteration, candidate, status, latency_ms,

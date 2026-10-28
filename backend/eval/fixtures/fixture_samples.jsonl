@@ -8,3 +8,4 @@
 {"id": "fix_008", "tier": "non-linear", "row_type": "external", "expression": "((x | y) - (x & y)) ^ (x ^ y)", "canonical": "0", "normalised_target": "0", "ground_truth_nodes": 1, "variables": ["x", "y"], "is_constant_folding": true, "source": "fixture, not dataset", "licence": "fixture, not dataset"}
 {"id": "fix_009", "tier": "linear", "row_type": "external", "expression": "~(~x)", "canonical": "x", "normalised_target": "x", "ground_truth_nodes": 1, "variables": ["x"], "source": "fixture, not dataset", "licence": "fixture, not dataset"}
 {"id": "fix_010", "tier": "polynomial", "row_type": "external", "expression": "x * 0", "canonical": "0", "normalised_target": "0", "ground_truth_nodes": 1, "variables": ["x"], "is_constant_folding": true, "source": "fixture, not dataset", "licence": "fixture, not dataset"}
+

@@ -51,6 +51,7 @@ class OllamaBackend(BaseLLMBackend):
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
+        seed: Optional[int] = None,
     ) -> str:
         """Streams completion tokens from Ollama, checking for cancellation between tokens."""
         if should_cancel and should_cancel():
@@ -59,17 +60,21 @@ class OllamaBackend(BaseLLMBackend):
         effective_max_tokens = max_tokens if max_tokens is not None else self.num_predict
 
         url = f"{self.base_url}/api/chat"
+        options = {
+            "temperature": temperature,
+            "num_predict": effective_max_tokens,
+            "num_ctx": 4096,
+            "stop": ["<|im_end|>", "<|im_start|>"],
+        }
+        if seed is not None:
+            options["seed"] = seed
+
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": True,
             "keep_alive": self.keep_alive,
-            "options": {
-                "temperature": temperature,
-                "num_predict": effective_max_tokens,
-                "num_ctx": 4096,
-                "stop": ["<|im_end|>", "<|im_start|>"],
-            },
+            "options": options,
         }
 
         generated_chunks: List[str] = []
@@ -79,6 +84,25 @@ class OllamaBackend(BaseLLMBackend):
                 with client.stream("POST", url, json=payload) as response:
                     if response.status_code != 200:
                         error_body = response.read().decode("utf-8", errors="ignore")
+                        # Distinguish model not found from other errors using /api/tags
+                        try:
+                            tags_resp = client.get(f"{self.base_url}/api/tags", timeout=2.0)
+                            if tags_resp.status_code == 200:
+                                models = [m.get("name", "") for m in tags_resp.json().get("models", [])]
+                                found = any(self.model_name == m or m.startswith(f"{self.model_name}:") for m in models)
+                                if not found or response.status_code == 404 or "not found" in error_body.lower():
+                                    raise LLMBackendError(
+                                        f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
+                                    )
+                        except LLMBackendError:
+                            raise
+                        except Exception:
+                            pass
+
+                        if response.status_code == 404 or "not found" in error_body.lower():
+                            raise LLMBackendError(
+                                f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
+                            )
                         raise LLMBackendError(
                             f"Ollama returned HTTP {response.status_code}: {error_body.strip()}"
                         )
@@ -104,8 +128,7 @@ class OllamaBackend(BaseLLMBackend):
 
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise LLMBackendError(
-                f"Ollama daemon unreachable at {self.base_url}. Make sure 'ollama serve' is running "
-                f"and model '{self.model_name}' has been created (ollama create {self.model_name} -f Modelfile). Error: {exc}"
+                f"Ollama is not running at {self.base_url}"
             ) from exc
         except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
             raise LLMBackendError(

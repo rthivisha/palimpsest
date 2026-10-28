@@ -50,7 +50,19 @@ export function App() {
       ? health?.fake_hint || 'Scripted demo model: only the Classic 2-Turn Demo is solvable'
       : null;
 
-  const handleStartRun = (expr: string, maxIters: number) => {
+  const handleStartRun = async (expr: string, maxIters: number) => {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        const freshHealth: SystemHealth = await res.json();
+        setHealth(freshHealth);
+        if (freshHealth.model_reachable === false) {
+          return;
+        }
+      }
+    } catch {
+      // Best-effort health check
+    }
     startRun(expr, maxIters);
   };
 
@@ -141,6 +153,8 @@ export function App() {
                   onCancelRun={cancelRun}
                   explainMode={explainMode}
                   fakeHint={fakeHint}
+                  isModelReachable={health?.model_reachable !== false}
+                  modelUnreachableReason={health?.model_unreachable_reason}
                 />
 
                 <AttemptTimeline

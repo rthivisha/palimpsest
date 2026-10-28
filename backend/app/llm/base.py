@@ -24,6 +24,7 @@ class BaseLLMBackend(ABC):
         temperature: float = 0.2,
         max_tokens: int = 512,
         should_cancel: Optional[Callable[[], bool]] = None,
+        seed: Optional[int] = None,
     ) -> str:
         """Generates a completion given a sequence of ChatML-style messages.
 

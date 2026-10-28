@@ -283,8 +283,16 @@ class TestPromptFormatTrainingExact:
 class TestOllamaBackend:
     """Verifies Ollama HTTP backend streaming and error handling."""
 
+    def test_ollama_default_base_url_and_override(self):
+        """Ollama base URL defaults to http://127.0.0.1:11434 and respects OLLAMA_BASE_URL override."""
+        backend_default = OllamaBackend()
+        assert backend_default.base_url == "http://127.0.0.1:11434"
+
+        backend_override = OllamaBackend(base_url="http://192.168.1.100:11434/")
+        assert backend_override.base_url == "http://192.168.1.100:11434"
+
     def test_ollama_daemon_unreachable_raises_descriptive_error(self):
-        """Simulates daemon offline and verifies helpful instructions in error."""
+        """Simulates daemon offline and verifies 'Ollama is not running at <url>' in error."""
         backend = OllamaBackend(base_url="http://127.0.0.1:59999", timeout=1.0)
         messages = [{"role": "user", "content": "hi"}]
 
@@ -292,24 +300,25 @@ class TestOllamaBackend:
             backend.generate(messages)
 
         err_msg = str(exc_info.value)
-        assert "Ollama daemon unreachable" in err_msg
-        assert "ollama serve" in err_msg
-        assert "Modelfile" in err_msg
+        assert "Ollama is not running at http://127.0.0.1:59999" in err_msg
 
     def test_ollama_http_non_200_error(self):
-        """Simulates Ollama returning HTTP 404 (model not found)."""
-        backend = OllamaBackend(base_url="http://localhost:11434")
+        """Simulates Ollama returning model not found and splits the error cleanly."""
+        backend = OllamaBackend(base_url="http://127.0.0.1:11434", model_name="palimpsest")
 
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.read.return_value = b'{"error": "model \'missing-model\' not found"}'
+        mock_stream_response = MagicMock()
+        mock_stream_response.status_code = 404
+        mock_stream_response.read.return_value = b'{"error": "model \'palimpsest\' not found"}'
 
-        with patch("httpx.Client.stream") as mock_stream:
-            mock_stream.return_value.__enter__.return_value = mock_response
+        mock_tags_response = MagicMock()
+        mock_tags_response.status_code = 200
+        mock_tags_response.json.return_value = {"models": [{"name": "other-model:latest"}]}
+
+        with patch("httpx.Client.stream") as mock_stream, patch("httpx.Client.get", return_value=mock_tags_response):
+            mock_stream.return_value.__enter__.return_value = mock_stream_response
             with pytest.raises(LLMBackendError) as exc_info:
                 backend.generate([{"role": "user", "content": "test"}])
-            assert "HTTP 404" in str(exc_info.value)
-            assert "model 'missing-model' not found" in str(exc_info.value)
+            assert "Model 'palimpsest' not found; run ollama create palimpsest -f Modelfile" in str(exc_info.value)
 
     def test_ollama_streaming_success(self):
         """Verifies parsing of Ollama streaming chunks into full completion string."""

@@ -93,6 +93,7 @@ class LlamaCppBackend(BaseLLMBackend):
         temperature: float = 0.2,
         max_tokens: Optional[int] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
+        seed: Optional[int] = None,
     ) -> str:
         """Generates completion via llama-cpp chat completion, checking cancellation per token."""
         if should_cancel and should_cancel():
@@ -102,13 +103,17 @@ class LlamaCppBackend(BaseLLMBackend):
         llm = self._ensure_model_loaded()
 
         try:
-            stream = llm.create_chat_completion(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=effective_max_tokens,
-                stream=True,
-                stop=["<|im_end|>", "<|im_start|>"],
-            )
+            kwargs = {
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": effective_max_tokens,
+                "stream": True,
+                "stop": ["<|im_end|>", "<|im_start|>"],
+            }
+            if seed is not None:
+                kwargs["seed"] = seed
+
+            stream = llm.create_chat_completion(**kwargs)
 
             generated_chunks: List[str] = []
             for chunk in stream:

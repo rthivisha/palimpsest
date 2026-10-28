@@ -294,7 +294,7 @@ To support thorough API and lifecycle testing, `FakeLLMBackend` responds to the 
 The event stream contract freezes the emission order: **payload events are emitted BEFORE `node_finished`**.
 
 1. Normal Success Loop:
-   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend}`
+   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend, model_name}`
    - `node_started`: `{"node": "parse_ast"}`
    - `node_finished`: `{"node": "parse_ast"}`
    - *Iteration 1*:
@@ -314,23 +314,23 @@ The event stream contract freezes the emission order: **payload events are emitt
      - `node_finished`: `{"node": "verify"}`
    - `node_started`: `{"node": "finalize_success"}`
    - `node_finished`: `{"node": "finalize_success"}`
-   - `final`: `{status: "VERIFIED_EQUIVALENT", final_expr, obf_nodes, final_nodes, compression_pct, total_ms, attempts, reason: null}`
+   - `final`: `{status: "VERIFIED_EQUIVALENT", final_expr, obf_nodes, final_nodes, compression_pct, total_ms, attempts, reason: null, backend, model_name}`
 
 2. Failing Loop (Max Iterations Reached):
    - Iterations $1 \dots K$ execute propose and verify.
    - Retries are emitted after iterations $1 \dots K-1$; **no trailing retry** is emitted after the final iteration.
    - `node_started`: `{"node": "finalize_fail"}`
    - `node_finished`: `{"node": "finalize_fail"}`
-   - `final`: `{status: "FAILED", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "..."}`
+   - `final`: `{status: "FAILED", final_expr: null, obf_nodes, final_nodes: null, compression_pct: 0.0, total_ms, attempts, reason: "...", backend, model_name}`
 
 3. Unsafe Input Sequence (`REJECTED_UNSAFE`):
-   - `run_started`: `{run_id, expression, obf_nodes: 0, max_iterations, backend}`
+   - `run_started`: `{run_id, expression, obf_nodes: 0, max_iterations, backend, model_name}`
    - `node_started`: `{"node": "parse_ast"}`
    - `node_finished`: `{"node": "parse_ast"}`
-   - `final`: `{status: "REJECTED_UNSAFE", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>"}`
+   - `final`: `{status: "REJECTED_UNSAFE", final_expr: null, obf_nodes: 0, final_nodes: null, compression_pct: 0.0, total_ms, attempts: 0, reason: "<error_message>", backend, model_name}`
 
 4. Backend Failure (Crashed or Unreachable Backend):
-   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend}`
+   - `run_started`: `{run_id, expression, obf_nodes, max_iterations, backend, model_name}`
    - `node_started`: `{"node": "parse_ast"}`
    - `node_finished`: `{"node": "parse_ast"}`
    - `node_started`: `{"node": "propose"}`
@@ -357,7 +357,7 @@ The event stream contract freezes the emission order: **payload events are emitt
 - Disconnected runs are marked with `final_status = "CANCELLED"`.
 - Backend failure runs are marked with `final_status = "ERROR"`.
 
-### 8.2 Schema
+### 8.2 Schema & Startup Migration
 - Database path: `palimpsest.sqlite` (gitignored).
 - Tables:
   ```sql
@@ -372,6 +372,7 @@ The event stream contract freezes the emission order: **payload events are emitt
       attempts INTEGER NOT NULL,
       total_ms REAL NOT NULL,
       backend TEXT NOT NULL,
+      model_name TEXT NOT NULL DEFAULT 'unknown',
       max_iterations INTEGER NOT NULL
   );
 
@@ -391,6 +392,8 @@ The event stream contract freezes the emission order: **payload events are emitt
 
   CREATE INDEX IF NOT EXISTS idx_attempts_run_id ON attempts(run_id);
   ```
+- **Startup Migration**:
+  On daemon initialization, `init_db()` inspects `PRAGMA table_info(runs)`. If the `model_name` column is missing (from older schemas), it executes `ALTER TABLE runs ADD COLUMN model_name TEXT DEFAULT 'unknown';` and backfills legacy rows (`UPDATE runs SET model_name = 'unknown' WHERE model_name IS NULL OR model_name = '';`). REST queries (`get_history`, `get_run`) fall back to `"unknown"` when reading pre-migration databases.
 - `witness_json` holds a JSON string with stringified 64-bit integer values.
 
 ---

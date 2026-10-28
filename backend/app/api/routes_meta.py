@@ -109,15 +109,31 @@ async def health_check() -> Dict[str, Any]:
 
     # Real model reachable check
     model_reachable = True
+    model_unreachable_reason = None
     if backend_name == "ollama":
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
+            async with httpx.AsyncClient(timeout=1.5) as client:
                 res = await client.get(f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags")
-                model_reachable = res.status_code == 200
+                if res.status_code == 200:
+                    data = res.json()
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    target = settings.OLLAMA_MODEL
+                    found = any(target == m or m.startswith(f"{target}:") for m in models)
+                    if found:
+                        model_reachable = True
+                    else:
+                        model_reachable = False
+                        model_unreachable_reason = f"Model '{target}' not found; run ollama create {target} -f Modelfile"
+                else:
+                    model_reachable = False
+                    model_unreachable_reason = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
         except Exception:
             model_reachable = False
+            model_unreachable_reason = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
     elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
         model_reachable = os.path.exists(settings.LLAMACPP_MODEL_PATH)
+        if not model_reachable:
+            model_unreachable_reason = f"Model file not found at {settings.LLAMACPP_MODEL_PATH}"
 
     fake_hint = (
         "Scripted demo model: only the Classic 2-Turn Demo is solvable"
@@ -130,6 +146,7 @@ async def health_check() -> Dict[str, Any]:
         "backend": backend_name,
         "model_name": model_name,
         "model_reachable": model_reachable,
+        "model_unreachable_reason": model_unreachable_reason,
         "fake_hint": fake_hint,
         "z3_version": z3_version,
         "z3_logic": "QF_BV (64-bit unsigned)",

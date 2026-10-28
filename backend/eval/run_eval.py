@@ -4,6 +4,9 @@ import hashlib
 import os
 import sys
 
+# Ensure repository root is on sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 from backend.app.config import settings
 from backend.eval.harness import EvalConfig, EvalHarness
 
@@ -91,3 +94,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -197,7 +197,7 @@ PALIMPSEST_BACKEND=fake
 Ollama backend
 env
 PALIMPSEST_BACKEND=ollama
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=palimpsest
 llama.cpp backend
 env
@@ -217,7 +217,7 @@ Configure .env:
 bash
 PALIMPSEST_BACKEND=ollama
 OLLAMA_MODEL=palimpsest
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 Run the demo CLI:
 bash
 python backend/app/cli_demo.py "(x ^ y) + 2 * (x & y)" --backend ollama
@@ -230,6 +230,50 @@ bash
 PALIMPSEST_BACKEND=llamacpp
 LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf
 LLAMACPP_N_THREADS=8
+
+### Troubleshooting: Ollama Not Running
+
+If the UI reports **"MODEL OFFLINE: Ollama is not running at http://127.0.0.1:11434"** or synthesis fails:
+
+1. **Verify Ollama is started**:
+   In a separate terminal, launch the daemon:
+   ```bash
+   ollama serve
+   ```
+
+2. **Check the daemon health**:
+   Confirm the daemon is listening on port 11434:
+   ```bash
+   curl http://127.0.0.1:11434/api/tags
+   ```
+   You should receive a JSON response listing installed models.
+
+3. **Verify the `palimpsest` model exists**:
+   If the UI or CLI reports `"Model 'palimpsest' not found; run ollama create palimpsest -f Modelfile"`, build the model package:
+   ```bash
+   ollama create palimpsest -f Modelfile
+   ```
+   Then verify it appears in your local catalog:
+   ```bash
+   ollama list
+   ```
+
+4. **Confirm Palimpsest connectivity**:
+   Check the Palimpsest system health endpoint:
+   ```bash
+   curl http://127.0.0.1:8000/api/health
+   ```
+   The response will confirm:
+   ```json
+   {
+     "status": "healthy",
+     "backend": "ollama",
+     "model_name": "palimpsest",
+     "model_reachable": true,
+     "model_unreachable_reason": null
+   }
+   ```
+   If `model_reachable` is false, review `OLLAMA_BASE_URL` in `.env` (default: `http://127.0.0.1:11434`).
 Ollama CLI Proof Example
 This is the proof pattern the project is designed to produce: a near-miss candidate is rejected by Z3, the solver extracts the witness, and the model repairs itself until the expression is formally verified.
 
