@@ -15,7 +15,7 @@ if (process.platform === 'win32') {
 }
 
 console.log('======================================================================');
-console.log('  PALIMPSEST Production/Testing Servers Starting (No Auto-Reload)');
+console.log('  PALIMPSEST Dev/Test Servers Starting (Vite Dev Server + Uvicorn Backend, No Auto-Reload)');
 console.log('  - Frontend:    http://127.0.0.1:5173 (strictly bound to IPv4 127.0.0.1)');
 console.log('  - Backend API: http://127.0.0.1:8000 (strictly bound to IPv4 127.0.0.1)');
 console.log('======================================================================');
@@ -56,10 +56,32 @@ commands.forEach((cmd) => {
 
 process.on('SIGINT', () => {
   console.log('\n[PALIMPSEST START] Received Ctrl+C (SIGINT). Stopping both servers cleanly...');
+  commands.forEach((c) => {
+    try {
+      c.kill();
+    } catch (_) {}
+  });
+  process.exit(0);
+});
+
+process.on('SIGBREAK', () => {
+  console.log('\n[PALIMPSEST START] Received Ctrl+Break / SIGBREAK. Stopping both servers cleanly...');
+  commands.forEach((c) => {
+    try {
+      c.kill();
+    } catch (_) {}
+  });
+  process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n[PALIMPSEST START] Received SIGTERM. Stopping both servers cleanly...');
+  commands.forEach((c) => {
+    try {
+      c.kill();
+    } catch (_) {}
+  });
+  process.exit(0);
 });
 
 result.then(

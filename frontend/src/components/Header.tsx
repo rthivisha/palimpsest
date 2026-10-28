@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ShieldCheck, Cpu, HelpCircle, Activity, Database, BookOpen } from 'lucide-react';
+import { ShieldCheck, Cpu, HelpCircle, Activity, Database, BookOpen, AlertTriangle } from 'lucide-react';
 import { SystemHealth } from '../types';
 
 interface HeaderProps {
@@ -9,6 +9,8 @@ interface HeaderProps {
   setExplainMode: React.Dispatch<React.SetStateAction<boolean>>;
   backend?: string | null;
   modelName?: string | null;
+  health?: SystemHealth | null;
+  isBackendOnline?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -18,18 +20,22 @@ export const Header: React.FC<HeaderProps> = ({
   setExplainMode,
   backend: runBackend,
   modelName: runModelName,
+  health: propHealth,
+  isBackendOnline = true,
 }) => {
-  const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [internalHealth, setInternalHealth] = useState<SystemHealth | null>(null);
 
   useEffect(() => {
+    if (propHealth !== undefined) return;
     fetch('/api/health')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (data) setHealth(data);
+        if (data) setInternalHealth(data);
       })
       .catch(() => {});
-  }, []);
+  }, [propHealth]);
 
+  const health = propHealth !== undefined ? propHealth : internalHealth;
   const activeBackend = runBackend || health?.backend || 'fake';
   const activeModel = runModelName || health?.model_name || (activeBackend === 'fake' ? 'fake-scripted' : '');
 
@@ -93,6 +99,17 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* System Badges & Explain Mode Toggle */}
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Backend Offline Indicator */}
+          {!isBackendOnline && (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-rose-600/70 bg-rose-950/80 text-xs font-mono text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse"
+              title="Palimpsest API server is unreachable. Automatic polling will reconnect when restored."
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+              <span className="font-bold tracking-wider">BACKEND OFFLINE</span>
+            </div>
+          )}
+
           {/* Backend Badge & Model Name */}
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-cyber-border bg-cyber-bg text-xs font-mono"

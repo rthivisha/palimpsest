@@ -15,14 +15,33 @@ export function App() {
   const [expression, setExpression] = useState<string>('(x ^ y) + 2 * (x & y)');
   const [maxIterations, setMaxIterations] = useState<number>(5);
   const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [isBackendOnline, setIsBackendOnline] = useState<boolean>(true);
 
   useEffect(() => {
-    fetch('/api/health')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data) setHealth(data);
-      })
-      .catch(() => {});
+    let isMounted = true;
+    const pollHealth = async () => {
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) {
+          const data: SystemHealth = await res.json();
+          if (isMounted) {
+            setHealth(data);
+            setIsBackendOnline(true);
+          }
+        } else {
+          if (isMounted) setIsBackendOnline(false);
+        }
+      } catch {
+        if (isMounted) setIsBackendOnline(false);
+      }
+    };
+
+    pollHealth();
+    const interval = setInterval(pollHealth, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const {
@@ -117,6 +136,8 @@ export function App() {
         setExplainMode={setExplainMode}
         backend={currentBackend}
         modelName={currentModelName}
+        health={health}
+        isBackendOnline={isBackendOnline}
       />
 
       {/* Main Container */}

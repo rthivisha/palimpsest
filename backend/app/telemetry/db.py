@@ -386,30 +386,50 @@ class TelemetryDB:
             logger.error("Error reading run %s: %s", run_id, exc)
             return None
 
-    def get_stats(self, exclude_fake: bool = False) -> Dict[str, Any]:
-        """Calculates aggregate statistics over runs, optionally excluding FAKE runs."""
+    def get_stats(
+        self,
+        exclude_fake: bool = False,
+        backend: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Calculates aggregate statistics over runs, optionally filtering by backend."""
         try:
             self.sync()
             with self._get_read_conn() as conn:
-                where_clause = " WHERE LOWER(backend) != 'fake'" if exclude_fake else ""
+                where_clauses = []
+                params = []
+                if backend:
+                    where_clauses.append("LOWER(backend) = ?")
+                    params.append(backend.lower().strip())
+                elif exclude_fake:
+                    where_clauses.append("LOWER(backend) != 'fake'")
+
+                where_str = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
                 cur = conn.execute(f"""
                     SELECT
                         COUNT(*) as total_runs,
                         SUM(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' OR outcome IN ('verified', 'verified-not-simpler') THEN 1 ELSE 0 END) as verified_runs,
                         SUM(CASE WHEN outcome = 'verified' OR (final_status = 'VERIFIED_EQUIVALENT' AND compression_pct > 0.0) THEN 1 ELSE 0 END) as strictly_simpler_runs,
-                        SUM(CASE WHEN final_status != 'VERIFIED_EQUIVALENT' AND COALESCE(outcome, '') NOT IN ('verified', 'verified-not-simpler') THEN 1 ELSE 0 END) as failed_runs,
+                        SUM(CASE WHEN outcome = 'failed-exhausted' OR (final_status = 'FAILED' AND COALESCE(outcome, '') NOT IN ('rejected-unsafe', 'depth-rejected', 'unconvertible', 'cancelled', 'error')) THEN 1 ELSE 0 END) as failed_exhausted_runs,
+                        SUM(CASE WHEN final_status = 'REJECTED_UNSAFE' OR outcome IN ('rejected-unsafe', 'depth-rejected', 'unconvertible') THEN 1 ELSE 0 END) as rejected_runs,
+                        SUM(CASE WHEN final_status = 'CANCELLED' OR outcome = 'cancelled' THEN 1 ELSE 0 END) as cancelled_runs,
+                        SUM(CASE WHEN final_status = 'ERROR' OR outcome = 'error' THEN 1 ELSE 0 END) as error_runs,
                         AVG(CASE WHEN final_status = 'VERIFIED_EQUIVALENT' OR outcome IN ('verified', 'verified-not-simpler') THEN compression_pct ELSE NULL END) as avg_compression,
                         AVG(total_ms) as avg_latency_ms,
                         AVG(attempts) as avg_attempts
-                    FROM runs{where_clause};
-                """)
+                    FROM runs{where_str};
+                """, tuple(params))
                 row = cur.fetchone()
                 if not row or row["total_runs"] == 0:
                     return {
                         "total_runs": 0,
+                        "completed_runs": 0,
                         "verified_runs": 0,
                         "strictly_simpler_runs": 0,
+                        "failed_exhausted_runs": 0,
                         "failed_runs": 0,
+                        "rejected_runs": 0,
+                        "cancelled_runs": 0,
+                        "error_runs": 0,
                         "success_rate_pct": 0.0,
                         "strictly_simpler_rate_pct": 0.0,
                         "simpler_rate_pct": 0.0,
@@ -421,8 +441,17 @@ class TelemetryDB:
                 total = row["total_runs"]
                 verified = row["verified_runs"] or 0
                 strictly_simpler = row["strictly_simpler_runs"] or 0
-                failed = total - verified
-                success_rate = round((verified / total) * 100, 2) if total > 0 else 0.0
+                failed_exhausted = row["failed_exhausted_runs"] or 0
+                rejected = row["rejected_runs"] or 0
+                cancelled = row["cancelled_runs"] or 0
+                error = row["error_runs"] or 0
+
+                # Completed runs are strictly verified runs + failed-exhausted runs
+                completed = verified + failed_exhausted
+                failed_total = total - verified
+
+                # Success rate computed over completed runs only
+                success_rate = round((verified / completed) * 100, 2) if completed > 0 else 0.0
                 strictly_simpler_rate = round((strictly_simpler / verified) * 100, 2) if verified > 0 else 0.0
                 simpler_rate = strictly_simpler_rate
                 avg_comp = round(row["avg_compression"] or 0.0, 2)
@@ -431,9 +460,14 @@ class TelemetryDB:
 
                 return {
                     "total_runs": total,
+                    "completed_runs": completed,
                     "verified_runs": verified,
                     "strictly_simpler_runs": strictly_simpler,
-                    "failed_runs": failed,
+                    "failed_exhausted_runs": failed_exhausted,
+                    "failed_runs": failed_total,
+                    "rejected_runs": rejected,
+                    "cancelled_runs": cancelled,
+                    "error_runs": error,
                     "success_rate_pct": success_rate,
                     "strictly_simpler_rate_pct": strictly_simpler_rate,
                     "simpler_rate_pct": simpler_rate,

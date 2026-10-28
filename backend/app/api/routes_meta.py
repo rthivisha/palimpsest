@@ -1,6 +1,6 @@
 """Route handlers for system health, aggregate statistics, and MBA examples."""
 import z3
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 
 from backend.app.config import settings
@@ -155,9 +155,12 @@ async def health_check() -> Dict[str, Any]:
 
 
 @router.get("/stats")
-async def get_stats(exclude_fake: bool = False) -> Dict[str, Any]:
+async def get_stats(
+    exclude_fake: bool = False,
+    backend: Optional[str] = None,
+) -> Dict[str, Any]:
     """Returns aggregate synthesis statistics over past de-obfuscation runs."""
-    return telemetry_db.get_stats(exclude_fake=exclude_fake)
+    return telemetry_db.get_stats(exclude_fake=exclude_fake, backend=backend)
 
 
 @router.get("/examples")

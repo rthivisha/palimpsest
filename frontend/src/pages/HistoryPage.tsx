@@ -78,13 +78,16 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
     if (run.attempts === 1) attemptsDist[0].count += 1;
     else if (run.attempts === 2) attemptsDist[1].count += 1;
     else if (run.attempts === 3) attemptsDist[2].count += 1;
-    else if (run.attempts >= 4) attemptsDist[3].count += 1;
+    else if (run.attempts != null && run.attempts >= 4) attemptsDist[3].count += 1;
   });
 
-  // Prepare chart data: 2. Success Rate ratio
+  // Prepare chart data: 2. Outcome breakdown across completed and uncompleted runs
   const successRatioData = [
-    { name: 'Verified (UNSAT)', count: stats?.verified_runs || 0 },
-    { name: 'Failed / Unverified', count: stats?.failed_runs || 0 },
+    { name: 'Verified', count: stats?.verified_runs || 0 },
+    { name: 'Exhausted', count: stats?.failed_exhausted_runs || 0 },
+    { name: 'Rejected', count: stats?.rejected_runs || 0 },
+    { name: 'Cancelled', count: stats?.cancelled_runs || 0 },
+    { name: 'Error', count: stats?.error_runs || 0 },
   ];
 
   // Prepare chart data: 3. Z3 Latency Progression across recent runs
@@ -227,8 +230,22 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                   }}
                 />
                 <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                  <Cell fill="#10b981" />
-                  <Cell fill="#ef4444" />
+                  {successRatioData.map((_, index) => (
+                    <Cell
+                      key={`cell-ratio-${index}`}
+                      fill={
+                        index === 0
+                          ? '#10b981'
+                          : index === 1
+                          ? '#ef4444'
+                          : index === 2
+                          ? '#f97316'
+                          : index === 3
+                          ? '#64748b'
+                          : '#dc2626'
+                      }
+                    />
+                  ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -366,12 +383,18 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({ onReplayRun, onNavigat
                             FAILED
                           </span>
                         ) : isTimeout ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-950/60 border border-orange-500/40 text-orange-300">
-                            TIMEOUT
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-950/60 border border-orange-500/40 text-orange-300"
+                            title="Eval/Z3-Only Baseline / Attempt-Level"
+                          >
+                            TIMEOUT (Eval/Z3-Only)
                           </span>
                         ) : isInvalid ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 border border-purple-500/40 text-purple-300">
-                            INVALID
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 border border-purple-500/40 text-purple-300"
+                            title="Eval/Z3-Only Baseline / Attempt-Level"
+                          >
+                            INVALID (Eval/Z3-Only)
                           </span>
                         ) : isDepthReject ? (
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 border border-rose-500/40 text-rose-300">

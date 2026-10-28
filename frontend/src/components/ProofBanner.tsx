@@ -66,7 +66,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="z3" explainMode={explainMode} inline />
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes ?? 'unknown'}) is not smaller than original ({finalResult.obf_nodes}).
+                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes != null ? finalResult.final_nodes : 'unknown'}) is not smaller than original ({finalResult.obf_nodes != null ? finalResult.obf_nodes : 'unknown'}).
               </p>
             </div>
           </div>
@@ -80,11 +80,11 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
             )}
             <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-800 text-amber-300">
               <span className="text-slate-400">Total: </span>
-              <span className="font-bold">{finalResult.total_ms} ms</span>
+              <span className="font-bold">{finalResult.total_ms != null ? `${finalResult.total_ms} ms` : 'unknown'}</span>
             </div>
             <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-800 text-amber-300">
               <span className="text-slate-400">Attempts: </span>
-              <span className="font-bold">{finalResult.attempts}</span>
+              <span className="font-bold">{finalResult.attempts != null ? finalResult.attempts : 'unknown'}</span>
             </div>
           </div>
         </div>
@@ -94,7 +94,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           <div className="p-3.5 rounded-lg bg-cyber-bg border border-cyber-border">
             <div className="text-[11px] font-mono text-slate-400 mb-1 flex items-center justify-between">
               <span>ORIGINAL INPUT</span>
-              <span className="text-slate-500 font-bold">{finalResult.obf_nodes} AST nodes</span>
+              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} AST nodes` : 'unknown'}</span>
             </div>
             <div className="font-mono text-sm text-slate-300 break-all bg-slate-950/60 p-2.5 rounded border border-slate-900">
               {originalExpr}
@@ -107,14 +107,14 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <span>EQUIVALENT CANDIDATE</span>
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-amber-300 font-bold">{finalResult.final_nodes ?? 'unknown'} nodes</span>
+                <span className="text-amber-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes` : 'unknown'}</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal
                   </span>
                 ) : (
                   <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-bold">
-                    {clampedCompression}%
+                    {finalResult.compression_pct != null ? `${clampedCompression}%` : 'unknown'}
                   </span>
                 )}
               </div>
@@ -166,11 +166,11 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
             )}
             <div className="px-2.5 py-1 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300">
               <span className="text-slate-400">Total: </span>
-              <span className="font-bold">{finalResult.total_ms} ms</span>
+              <span className="font-bold">{finalResult.total_ms != null ? `${finalResult.total_ms} ms` : 'unknown'}</span>
             </div>
             <div className="px-2.5 py-1 rounded bg-emerald-950/80 border border-emerald-800 text-emerald-300">
               <span className="text-slate-400">Attempts: </span>
-              <span className="font-bold">{finalResult.attempts}</span>
+              <span className="font-bold">{finalResult.attempts != null ? finalResult.attempts : 'unknown'}</span>
             </div>
           </div>
         </div>
@@ -181,7 +181,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           <div className="p-3.5 rounded-lg bg-cyber-bg border border-cyber-border">
             <div className="text-[11px] font-mono text-slate-400 mb-1 flex items-center justify-between">
               <span>ORIGINAL OBFUSCATED INPUT</span>
-              <span className="text-slate-500 font-bold">{finalResult.obf_nodes} AST nodes</span>
+              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} AST nodes` : 'unknown'}</span>
             </div>
             <div className="font-mono text-sm text-slate-300 break-all bg-slate-950/60 p-2.5 rounded border border-slate-900">
               {originalExpr}
@@ -196,14 +196,14 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="compression" explainMode={explainMode} inline />
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-emerald-300 font-bold">{finalResult.final_nodes ?? 'unknown'} nodes</span>
+                <span className="text-emerald-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes` : 'unknown'}</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal
                   </span>
                 ) : (
                   <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-bold">
-                    -{clampedCompression}%
+                    {finalResult.compression_pct != null ? `-${clampedCompression}%` : 'unknown'}
                   </span>
                 )}
               </div>
@@ -227,6 +227,16 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
   }
 
   // Terminal Fail or Security Rejection
+  const rawReason =
+    finalResult.reason ||
+    (isUnsafe
+      ? 'Security Gate Rejection: Malformed or disallowed syntax.'
+      : isCancelled
+      ? 'Synthesis cancelled by user.'
+      : 'Verification budget exhausted without equivalence proof.');
+  const cleanReason = rawReason.replace(/\r?\n|\r/g, ' ').replace(/\s+/g, ' ').trim();
+  const truncatedReason = cleanReason.length > 200 ? cleanReason.slice(0, 197) + '...' : cleanReason;
+
   return (
     <div className="bg-rose-950/30 border border-rose-500/60 rounded-xl p-5 shadow-[0_0_20px_rgba(239,68,68,0.15)] space-y-3">
       <div className="flex items-center gap-3">
@@ -244,8 +254,8 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
             </span>
             <ExplainTooltip topic="cegis" explainMode={explainMode} inline />
           </div>
-          <p className="text-xs text-slate-300 mt-0.5">
-            {finalResult.reason || 'Verification budget exhausted without equivalence proof.'}
+          <p className="text-xs text-slate-300 mt-0.5 font-mono truncate max-w-3xl">
+            {truncatedReason}
           </p>
         </div>
       </div>

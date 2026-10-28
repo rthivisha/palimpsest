@@ -76,9 +76,9 @@ All synthesis attempts, evaluation rows, and baselines evaluate to exactly one o
 | :--- | :--- |
 | **`verified`** | Z3 solver returned `UNSAT` (`QF_BV_UNSAT_64BIT_VERIFIED`) AND candidate AST node count is strictly smaller than original (`cand_nodes < obf_nodes`), or for `IDEMPOTENT` rows, no larger than original (`cand_nodes <= obf_nodes`). |
 | **`verified-not-simpler`** | Z3 solver returned `UNSAT`, but candidate AST node count is NOT simpler than original (`cand_nodes >= obf_nodes`, or for idempotent rows `cand_nodes > obf_nodes`). Reported in UI as "Verified equivalent, but not simpler" and excluded from success numerator. |
-| **`failed-exhausted`** | Model exhausted all $K$ CEGIS loop attempts, receiving formal counterexamples on each iteration, without proposing an equivalent candidate. |
-| **`unknown-timeout`** | Z3 solver or model inference exceeded allocated time budget, returning `UNKNOWN`. |
-| **`invalid`** | Model proposed invalid Python syntax or non-MBA operators failing the AST whitelist. |
+| **`failed-exhausted`** | Model exhausted all $K$ CEGIS loop attempts, receiving formal counterexamples on each iteration, without proposing an equivalent candidate. In reporting, `failed-exhausted` benchmark rows are broken down by their last-attempt verification status (`SAT` / `UNKNOWN` / `INVALID`). |
+| **`unknown-timeout`** | (Eval/Z3-Only Baseline / Attempt-Level) Z3 solver or model inference exceeded allocated time budget, returning `UNKNOWN`. |
+| **`invalid`** | (Eval/Z3-Only Baseline / Attempt-Level) Model proposed invalid Python syntax or non-MBA operators failing the AST whitelist. |
 | **`rejected-unsafe`** | Initial input expression rejected by the AST security gate whitelist. |
 | **`depth-rejected`** | Obfuscated input or candidate exceeded `MAX_AST_DEPTH` (default 100). |
 | **`unconvertible`** | In `--z3-only` baseline mode, expression could not be parsed or safely transformed into Z3 bit-vectors. |
@@ -152,11 +152,15 @@ Success within 3 attempts (CEGIS): 81.00%  (95% CI: [75.02%, 85.83%])
 Success within 5 attempts (CEGIS): 86.50%  (95% CI: [81.09%, 90.62%])
 
 Outcome Breakdown (Universal Denominator N=200):
-  SUCCESS_PROVEN:    173  (86.50%)  [Z3 QF_BV UNSAT Verified]
-  FAILED_EXHAUSTED:   18  ( 9.00%)  [5 attempts exhausted]
-  TIMEOUT_UNKNOWN:     5  ( 2.50%)  [Solver/inference timeout]
-  INVALID_SYNTAX:      1  ( 0.50%)  [AST whitelist or syntax error]
-  DEPTH_REJECTED:      3  ( 1.50%)  [AST depth > 100 gate rejection]
+  verified:            173  (86.50%)  [Z3 QF_BV UNSAT Verified & Simpler]
+  verified-not-simpler:  0  ( 0.00%)  [UNSAT but candidate AST >= original]
+  failed-exhausted:     18  ( 9.00%)  [5 attempts exhausted]
+    ├── Last attempt SAT (Counterexample): 15  (7.50%)
+    ├── Last attempt UNKNOWN (Timeout):     2  (1.00%)
+    └── Last attempt INVALID (Syntax):      1  (0.50%)
+  unknown-timeout:       5  ( 2.50%)  [Eval/Z3-Only Baseline / Attempt-Level]
+  invalid:               1  ( 0.50%)  [Eval/Z3-Only Baseline / Attempt-Level]
+  depth-rejected:        3  ( 1.50%)  [AST depth > 100 gate rejection]
 
 Transformation Classes by Tier:
   Idempotent Expressions:    12 (Linear: 8, Non-Linear: 4, Polynomial: 0)

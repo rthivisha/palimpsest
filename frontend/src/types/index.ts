@@ -58,34 +58,34 @@ export interface RunStartedPayload {
 }
 
 export interface FinalPayload {
-  status: BlueprintStatus | string;
-  outcome?: RunOutcome | string;
+  status: BlueprintStatus | string | null;
+  outcome?: RunOutcome | string | null;
   final_expr: string | null;
-  obf_nodes: number;
-  final_nodes: number | string | null;
-  compression_pct: number;
-  total_ms: number;
-  attempts: number;
+  obf_nodes: number | null;
+  final_nodes: number | null;
+  compression_pct: number | null;
+  total_ms: number | null;
+  attempts: number | null;
   reason: string | null;
-  backend?: string;
-  model_name?: string;
+  backend?: string | null;
+  model_name?: string | null;
 }
 
 export interface RunSummary {
   run_id: string;
   timestamp: string;
   expression: string;
-  obf_nodes: number;
+  obf_nodes: number | null;
   final_status: string;
-  outcome?: string;
+  outcome?: string | null;
   reason?: string | null;
   final_expr: string | null;
-  final_nodes?: number | string | null;
-  compression_pct: number;
-  attempts: number;
-  total_ms: number;
+  final_nodes?: number | null;
+  compression_pct: number | null;
+  attempts: number | null;
+  total_ms: number | null;
   backend: string;
-  model_name?: string;
+  model_name?: string | null;
   max_iterations: number;
 }
 
@@ -95,10 +95,16 @@ export interface RunDetail extends RunSummary {
 
 export interface StatsResponse {
   total_runs: number;
+  completed_runs?: number;
   verified_runs: number;
   strictly_simpler_runs?: number;
+  failed_exhausted_runs?: number;
   failed_runs: number;
+  rejected_runs?: number;
+  cancelled_runs?: number;
+  error_runs?: number;
   success_rate_pct: number;
+  strictly_simpler_rate_pct?: number;
   simpler_rate_pct?: number;
   avg_compression_pct?: number;
   avg_latency_ms?: number;

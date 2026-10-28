@@ -974,19 +974,63 @@ class TestHostHeaderAndREST:
             "backend": "fake",
             "max_iterations": 5,
         })
+        # Run 4: Real Ollama backend run (verified, strictly simpler)
+        temp_db.record_run({
+            "run_id": "run_4",
+            "expression": "x + 0",
+            "obf_nodes": 3,
+            "final_status": "VERIFIED_EQUIVALENT",
+            "outcome": "verified",
+            "final_expr": "x",
+            "final_nodes": 1,
+            "compression_pct": 66.67,
+            "attempts": 1,
+            "total_ms": 320.0,
+            "backend": "ollama",
+            "max_iterations": 5,
+        })
         temp_db.sync()
 
         client = TestClient(app)
+
+        # Baseline: All backends included
         res = client.get("/api/stats")
         assert res.status_code == 200
         stats = res.json()
-        assert stats["total_runs"] == 3
-        # Both verified and verified-not-simpler count toward verified_runs
-        assert stats["verified_runs"] == 2
-        assert stats["strictly_simpler_runs"] == 1
+        assert stats["total_runs"] == 4
+        assert stats["completed_runs"] == 4
+        assert stats["verified_runs"] == 3
+        assert stats["strictly_simpler_runs"] == 2
+        assert stats["failed_exhausted_runs"] == 1
+        assert stats["rejected_runs"] == 0
+        assert stats["cancelled_runs"] == 0
+        assert stats["error_runs"] == 0
         assert stats["failed_runs"] == 1
-        assert stats["success_rate_pct"] == 66.67
-        assert stats["simpler_rate_pct"] == 50.0
+        assert stats["success_rate_pct"] == 75.0
+        assert stats["simpler_rate_pct"] == 66.67
+        assert stats["strictly_simpler_rate_pct"] == 66.67
+
+        # Filter by backend=ollama
+        res_ollama = client.get("/api/stats?backend=ollama")
+        assert res_ollama.status_code == 200
+        stats_ollama = res_ollama.json()
+        assert stats_ollama["total_runs"] == 1
+        assert stats_ollama["completed_runs"] == 1
+        assert stats_ollama["verified_runs"] == 1
+        assert stats_ollama["strictly_simpler_runs"] == 1
+        assert stats_ollama["failed_exhausted_runs"] == 0
+        assert stats_ollama["success_rate_pct"] == 100.0
+
+        # Filter by exclude_fake=true
+        res_nofake = client.get("/api/stats?exclude_fake=true")
+        assert res_nofake.status_code == 200
+        stats_nofake = res_nofake.json()
+        assert stats_nofake["total_runs"] == 1
+        assert stats_nofake["completed_runs"] == 1
+        assert stats_nofake["verified_runs"] == 1
+        assert stats_nofake["strictly_simpler_runs"] == 1
+        assert stats_nofake["failed_exhausted_runs"] == 0
+        assert stats_nofake["success_rate_pct"] == 100.0
 
 
 # ==============================================================================
@@ -1159,11 +1203,16 @@ class TestDatabasePragmasAndIndexes:
         # Check get_stats aggregate calculations with universal accounting
         stats = db.get_stats()
         assert stats["total_runs"] == 6
+        assert stats["completed_runs"] == 3
         assert stats["verified_runs"] == 2
         assert stats["strictly_simpler_runs"] == 1
+        assert stats["failed_exhausted_runs"] == 1
+        assert stats["rejected_runs"] == 1
+        assert stats["cancelled_runs"] == 1
+        assert stats["error_runs"] == 1
         assert stats["failed_runs"] == 4
-        # Total must equal verified + failed without dropping any rows
-        assert stats["total_runs"] == stats["verified_runs"] + stats["failed_runs"]
+        # Success rate is computed over completed runs only (2 verified / 3 completed = 66.67%)
+        assert stats["success_rate_pct"] == 66.67
         # Simpler rate strictly excludes idempotent / not simpler rows (1 out of 2 = 50.0%)
         assert stats["simpler_rate_pct"] == 50.0
         assert stats["strictly_simpler_rate_pct"] == 50.0

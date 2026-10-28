@@ -66,7 +66,7 @@ export function useRunStream(): UseRunStreamReturn {
     setActiveNode(null);
     setRunId(pastRun.run_id);
     setExpression(pastRun.expression);
-    setObfNodes(pastRun.obf_nodes);
+    setObfNodes(pastRun.obf_nodes ?? 0);
     setMaxIterations(pastRun.max_iterations);
     setBackend(pastRun.backend);
     if (pastRun.model_name) setModelName(pastRun.model_name);
@@ -114,16 +114,33 @@ export function useRunStream(): UseRunStreamReturn {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
+    let response: Response;
     try {
-      const response = await fetch('/api/run', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-        },
-        body: jsonBody({ expression: expr, max_iterations: maxIters }),
-        signal: abortController.signal,
-      });
+      try {
+        response = await fetch('/api/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+          },
+          body: jsonBody({ expression: expr, max_iterations: maxIters }),
+          signal: abortController.signal,
+        });
+      } catch (firstErr: any) {
+        if (firstErr.name === 'AbortError') throw firstErr;
+        // Network-level failure: perform 1 retry after 500ms
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (abortController.signal.aborted) throw firstErr;
+        response = await fetch('/api/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+          },
+          body: jsonBody({ expression: expr, max_iterations: maxIters }),
+          signal: abortController.signal,
+        });
+      }
 
       // 1. Handle HTTP 429: "previous run still finishing" with Retry-After header
       if (response.status === 429) {
@@ -334,7 +351,18 @@ export function useRunStream(): UseRunStreamReturn {
       if (err.name === 'AbortError') {
         // Handled cleanly
       } else {
-        setError(err.message || 'Stream connection failed.');
+        const isNetworkErr =
+          err instanceof TypeError ||
+          err.message?.includes('Failed to fetch') ||
+          err.message?.includes('NetworkError') ||
+          err.message?.includes('ECONNREFUSED');
+        if (isNetworkErr) {
+          setError(
+            'Backend server offline: Unable to connect to PALIMPSEST API server at http://127.0.0.1:8000. Please verify the backend service is running.'
+          );
+        } else {
+          setError(err.message || 'Stream connection failed.');
+        }
       }
     } finally {
       if (elapsedTimerRef.current) {
