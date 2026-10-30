@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Square, AlertTriangle, AlertCircle, Sparkles, RefreshCw } from 'lucide-react';
+import { Play, Square, AlertTriangle, AlertCircle, Sparkles, RefreshCw, Check, Copy } from 'lucide-react';
 import { ExplainTooltip } from './ExplainTooltip';
 
 interface CommandCenterProps {
@@ -21,6 +21,8 @@ interface CommandCenterProps {
   fakeHint?: string | null;
   isModelReachable?: boolean;
   modelUnreachableReason?: string | null;
+  health?: import('../types').SystemHealth | null;
+  onCheckAgain?: () => void | Promise<void>;
 }
 
 const PRESETS = [
@@ -70,8 +72,28 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
   fakeHint,
   isModelReachable = true,
   modelUnreachableReason = null,
+  health = null,
+  onCheckAgain,
 }) => {
   const [copiedPreset, setCopiedPreset] = useState<string | null>(null);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [isCheckingAgain, setIsCheckingAgain] = useState<boolean>(false);
+
+  const handleCopyCommand = (cmd: string) => {
+    navigator.clipboard.writeText(cmd);
+    setCopiedCommand(cmd);
+    setTimeout(() => setCopiedCommand(null), 2000);
+  };
+
+  const handleCheckAgain = async () => {
+    if (!onCheckAgain) return;
+    setIsCheckingAgain(true);
+    try {
+      await onCheckAgain();
+    } finally {
+      setTimeout(() => setIsCheckingAgain(false), 500);
+    }
+  };
 
   const handleSelectPreset = (expr: string, label: string) => {
     setExpression(expr);
@@ -87,6 +109,110 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
 
   return (
     <div className="bg-cyber-surface border border-cyber-border rounded-xl p-5 shadow-lg">
+      {/* Distinct Panel 1: Ollama Not Running */}
+      {health?.model_status === 'ollama_not_running' && (
+        <div className="mb-4 p-4 rounded-xl bg-amber-950/40 border border-amber-500/50 text-amber-200 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold font-mono text-amber-300">
+                  Ollama Is Not Running
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  The local Ollama inference service is offline at {health.hint || 'http://127.0.0.1:11434'}.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCheckAgain}
+              disabled={isCheckingAgain}
+              className="px-3 py-1.5 rounded text-xs font-mono font-medium bg-amber-900/60 hover:bg-amber-900/90 text-amber-200 border border-amber-500/40 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingAgain ? 'animate-spin' : ''}`} />
+              <span>Check again</span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-300 space-y-2 pt-1 border-t border-amber-900/40">
+            <div className="font-semibold text-slate-200">How to restore Ollama:</div>
+            <div className="flex items-start gap-2 pl-1">
+              <span className="text-amber-400 font-bold">1.</span>
+              <span>Open the <strong>Ollama</strong> desktop app from your Windows System Tray or Start Menu.</span>
+            </div>
+            <div className="flex items-start gap-2 pl-1">
+              <span className="text-amber-400 font-bold">2.</span>
+              <div className="flex-1">
+                <span>Or run the daemon in a separate terminal:</span>
+                <div className="mt-1 flex items-center gap-2 bg-slate-950/80 border border-amber-900/60 rounded px-2.5 py-1.5 font-mono text-xs text-cyan-300">
+                  <span className="flex-1">ollama serve</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyCommand('ollama serve')}
+                    className="p-1 text-slate-400 hover:text-cyan-300 transition-colors"
+                    title="Copy command"
+                  >
+                    {copiedCommand === 'ollama serve' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Distinct Panel 2: Model Missing in Catalog */}
+      {health?.model_status === 'model_missing' && (
+        <div className="mb-4 p-4 rounded-xl bg-amber-950/40 border border-amber-500/50 text-amber-200 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold font-mono text-amber-300">
+                  Model "palimpsest" Not Found
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Ollama is running, but the fine-tuned <code className="text-cyan-300">palimpsest</code> model has not been created yet.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCheckAgain}
+              disabled={isCheckingAgain}
+              className="px-3 py-1.5 rounded text-xs font-mono font-medium bg-amber-900/60 hover:bg-amber-900/90 text-amber-200 border border-amber-500/40 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingAgain ? 'animate-spin' : ''}`} />
+              <span>Check again</span>
+            </button>
+          </div>
+
+          <div className="text-xs text-slate-300 space-y-2 pt-1 border-t border-amber-900/40">
+            <div className="font-semibold text-slate-200">How to create the model:</div>
+            <p>Run the following command in your terminal (or run <code className="text-cyan-300">npm run model:setup</code>):</p>
+            <div className="flex items-center gap-2 bg-slate-950/80 border border-amber-900/60 rounded px-2.5 py-1.5 font-mono text-xs text-cyan-300">
+              <span className="flex-1">ollama create palimpsest -f Modelfile</span>
+              <button
+                type="button"
+                onClick={() => handleCopyCommand('ollama create palimpsest -f Modelfile')}
+                className="p-1 text-slate-400 hover:text-cyan-300 transition-colors"
+                title="Copy command"
+              >
+                {copiedCommand === 'ollama create palimpsest -f Modelfile' ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 429 Concurrency Backoff Banner */}
       {is429Blocked && (
         <div className="mb-4 p-4 rounded-lg bg-amber-950/40 border border-amber-500/50 text-amber-200 flex items-start gap-3">
@@ -150,6 +276,10 @@ export const CommandCenter: React.FC<CommandCenterProps> = ({
               className="w-full bg-cyber-bg border border-cyber-border rounded-lg px-4 py-3 font-mono text-sm text-cyan-300 placeholder-slate-600 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/50 transition-all resize-none disabled:opacity-60"
             />
           </div>
+          <p className="mt-1.5 text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
+            <span className="text-cyan-500">ℹ</span>
+            <span>Trained on a fixed family of MBA patterns; expressions outside it may not verify. Z3 rejects any unproven answer. Equivalence proven by Z3 (QF_BV, 64-bit).</span>
+          </p>
         </div>
 
         {/* Presets Row */}

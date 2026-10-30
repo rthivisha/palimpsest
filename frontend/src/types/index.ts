@@ -55,6 +55,7 @@ export interface RunStartedPayload {
   max_iterations: number;
   backend: string;
   model_name?: string;
+  is_fallback?: boolean;
 }
 
 export interface FinalPayload {
@@ -69,6 +70,7 @@ export interface FinalPayload {
   reason: string | null;
   backend?: string | null;
   model_name?: string | null;
+  is_fallback?: boolean;
 }
 
 export interface RunSummary {
@@ -125,15 +127,23 @@ export interface ExampleExpr {
   transformation_steps?: string[];
 }
 
+export type ModelStatus = 'ready' | 'ollama_not_running' | 'model_missing' | 'error';
+
 export interface SystemHealth {
   status: string;
   backend: string;
   model_name: string;
   model_reachable?: boolean;
   model_unreachable_reason?: string | null;
+  model_status?: ModelStatus;
+  hint?: string | null;
+  fix_command?: string | null;
+  is_fallback?: boolean;
+  fallback_backend?: string | null;
   fake_hint?: string | null;
   z3_version: string;
   z3_logic: string;
-  langsmith_enabled: boolean;
+  langsmith_enabled?: boolean;
+  langsmith_tracing?: boolean;
 }
 

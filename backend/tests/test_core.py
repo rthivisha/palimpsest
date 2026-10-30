@@ -28,6 +28,7 @@ from backend.app.core.safety import (
 )
 from backend.app.core.ast_utils import (
     count_nodes,
+    count_nodes_training,
     extract_variables,
     get_ast_depth,
     format_expr,
@@ -194,6 +195,13 @@ class TestAstUtils:
         # Unary ~x -> UnaryOp(~), Name(x) = 2 nodes
         assert count_nodes("~x") == 2
 
+    def test_count_nodes_training(self):
+        """Counts AST nodes using training notebook counter including operators (13 for demo, 4 for x + y)."""
+        assert count_nodes_training("(x ^ y) + 2 * (x & y)") == 13
+        assert count_nodes_training("x + y") == 4
+        assert count_nodes_training("x") == 1
+        assert count_nodes_training("~x") == 3
+
     def test_extract_variables(self):
         """Discovers all variable identifiers without duplicates."""
         expr1 = "(rax ^ rbx) + 2 * (rax & rbx) - rcx"
@@ -254,7 +262,7 @@ class TestZ3Verifier:
         """An incorrect guess must return SAT and provide a concrete counterexample witness."""
         # Original: x + y. Incorrect candidate: x ^ y.
         # Differ whenever both x and y have bit 1 set (e.g. x=1, y=1: 1+1=2, 1^1=0).
-        res = verify_equivalence("x + y", "x ^ y")
+        res = verify_equivalence("x + y", "x ^ y", witness_policy="bounded")
         assert res["status"] == STATUS_SAT
         assert "x" in res["witness"]
         assert "y" in res["witness"]
@@ -279,12 +287,19 @@ class TestZ3Verifier:
         assert wx < 16 and wy < 16
 
     def test_demo_witness_is_small(self):
-        """Asserts that the demo expression witness values are small (ULT(v, 2) yields x=1, y=1)."""
-        res = verify_equivalence("(x ^ y) + 2 * (x & y)", "x ^ y")
+        """Asserts that the demo expression witness values are small under bounded policy (ULT(v, 2) yields x=1, y=1)."""
+        res = verify_equivalence("(x ^ y) + 2 * (x & y)", "x ^ y", witness_policy="bounded")
         assert res["status"] == STATUS_SAT
         assert res["witness"] == {"x": 1, "y": 1}
         assert res["expected"] == 2
         assert res["actual"] == 0
+
+    def test_witness_policy_z3_default(self):
+        """Asserts that z3_default witness policy queries raw unconstrained solver directly."""
+        res = verify_equivalence("(x ^ y) + 2 * (x & y)", "x ^ y", witness_policy="z3_default")
+        assert res["status"] == STATUS_SAT
+        assert "x" in res["witness"] and "y" in res["witness"]
+        assert res["expected"] != res["actual"]
 
     def test_candidate_wrong_only_on_large_inputs(self):
         """A candidate wrong only on large inputs returns SAT via fallback."""
@@ -292,7 +307,7 @@ class TestZ3Verifier:
         # Fallback to unconstrained query must detect discrepancy when x >= 4294967296 and return SAT.
         orig = "x"
         cand = "x ^ (x >> 32)"
-        res = verify_equivalence(orig, cand)
+        res = verify_equivalence(orig, cand, witness_policy="bounded")
         assert res["status"] == STATUS_SAT
         assert res["witness"]["x"] >= 16
         assert res["expected"] != res["actual"]
@@ -301,7 +316,7 @@ class TestZ3Verifier:
         """Bounded UNSAT must never emit STATUS_VERIFIED."""
         orig = "x"
         cand = "x ^ (x >> 32)"
-        res = verify_equivalence(orig, cand)
+        res = verify_equivalence(orig, cand, witness_policy="bounded")
         assert res["status"] == "SAT"
         assert res["witness"]["x"] >= 2**32
 
@@ -447,6 +462,22 @@ class TestZ3Verifier:
         # We test that 0xFFFFFFFFFFFFFFFF >> 1 equals 0x7FFFFFFFFFFFFFFF:
         res = verify_equivalence("0xFFFFFFFFFFFFFFFF >> 1", "0x7FFFFFFFFFFFFFFF")
         assert res["status"] == STATUS_VERIFIED
+
+    def test_rshift_semantics_logical_vs_arithmetic(self):
+        """Tests RSHIFT_SEMANTICS: logical (LShR / zero-fill) vs arithmetic (bvsashr / sign-extend)."""
+        # 1. Under logical right shift (default for formal proofs):
+        # 0xFFFFFFFFFFFFFFFF >> 1 == 0x7FFFFFFFFFFFFFFF
+        res_logic = verify_equivalence("0xFFFFFFFFFFFFFFFF >> 1", "0x7FFFFFFFFFFFFFFF", rshift_semantics="logical")
+        assert res_logic["status"] == STATUS_VERIFIED
+
+        # 2. Under arithmetic right shift (training verifier behavior):
+        # 0xFFFFFFFFFFFFFFFF >> 1 preserves sign bit, staying 0xFFFFFFFFFFFFFFFF
+        res_arith = verify_equivalence("0xFFFFFFFFFFFFFFFF >> 1", "0xFFFFFFFFFFFFFFFF", rshift_semantics="arithmetic")
+        assert res_arith["status"] == STATUS_VERIFIED
+
+        # 3. Discrepancy check: 0xFFFFFFFFFFFFFFFF >> 1 is NOT 0x7FFFFFFFFFFFFFFF under arithmetic:
+        res_diff = verify_equivalence("0xFFFFFFFFFFFFFFFF >> 1", "0x7FFFFFFFFFFFFFFF", rshift_semantics="arithmetic")
+        assert res_diff["status"] == STATUS_SAT
 
     def test_invalid_syntax_returns_invalid_status(self):
         """Expressions violating safety or syntax return STATUS_INVALID without raising."""

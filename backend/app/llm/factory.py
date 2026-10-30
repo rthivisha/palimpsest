@@ -8,6 +8,16 @@ from backend.app.llm.llamacpp_backend import LlamaCppBackend
 from backend.app.llm.ollama_backend import OllamaBackend
 
 
+def is_llamacpp_available() -> bool:
+    """Checks if llama_cpp package is importable and model GGUF exists on disk."""
+    import os
+    try:
+        import llama_cpp  # noqa: F401
+        return os.path.exists(settings.LLAMACPP_MODEL_PATH)
+    except ImportError:
+        return False
+
+
 def get_backend(backend_name: Optional[str] = None) -> BaseLLMBackend:
     """Instantiates the requested LLM backend.
 

@@ -66,12 +66,17 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="z3" explainMode={explainMode} inline />
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes != null ? finalResult.final_nodes : 'unknown'}) is not smaller than original ({finalResult.obf_nodes != null ? finalResult.obf_nodes : 'unknown'}).
+                SMT solver verified bitwise equivalence (QF_BV UNSAT), but candidate AST node count ({finalResult.final_nodes != null ? `${finalResult.final_nodes} (semantic)` : 'unknown'}) is not smaller than original ({finalResult.obf_nodes != null ? `${finalResult.obf_nodes} (semantic)` : 'unknown'}).
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono">
+            {finalResult.is_fallback && (
+              <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-500/60 text-amber-300 font-mono text-xs font-bold">
+                LLAMA.CPP (fallback)
+              </div>
+            )}
             {finalResult.backend && (
               <div className="px-2.5 py-1 rounded bg-slate-900/90 border border-slate-700 text-cyan-300 font-mono text-xs">
                 <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
@@ -94,7 +99,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           <div className="p-3.5 rounded-lg bg-cyber-bg border border-cyber-border">
             <div className="text-[11px] font-mono text-slate-400 mb-1 flex items-center justify-between">
               <span>ORIGINAL INPUT</span>
-              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} AST nodes` : 'unknown'}</span>
+              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} nodes (semantic)` : 'unknown'}</span>
             </div>
             <div className="font-mono text-sm text-slate-300 break-all bg-slate-950/60 p-2.5 rounded border border-slate-900">
               {originalExpr}
@@ -107,7 +112,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <span>EQUIVALENT CANDIDATE</span>
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-amber-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes` : 'unknown'}</span>
+                <span className="text-amber-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes (semantic)` : 'unknown'}</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal
@@ -158,6 +163,11 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-xs font-mono">
+            {finalResult.is_fallback && (
+              <div className="px-2.5 py-1 rounded bg-amber-950/80 border border-amber-500/60 text-amber-300 font-mono text-xs font-bold">
+                LLAMA.CPP (fallback)
+              </div>
+            )}
             {finalResult.backend && (
               <div className="px-2.5 py-1 rounded bg-slate-900/90 border border-slate-700 text-cyan-300 font-mono text-xs">
                 <span className="font-bold">{finalResult.backend.toUpperCase()}</span>
@@ -181,7 +191,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
           <div className="p-3.5 rounded-lg bg-cyber-bg border border-cyber-border">
             <div className="text-[11px] font-mono text-slate-400 mb-1 flex items-center justify-between">
               <span>ORIGINAL OBFUSCATED INPUT</span>
-              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} AST nodes` : 'unknown'}</span>
+              <span className="text-slate-500 font-bold">{finalResult.obf_nodes != null ? `${finalResult.obf_nodes} nodes (semantic)` : 'unknown'}</span>
             </div>
             <div className="font-mono text-sm text-slate-300 break-all bg-slate-950/60 p-2.5 rounded border border-slate-900">
               {originalExpr}
@@ -196,7 +206,7 @@ export const ProofBanner: React.FC<ProofBannerProps> = ({
                 <ExplainTooltip topic="compression" explainMode={explainMode} inline />
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-emerald-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes` : 'unknown'}</span>
+                <span className="text-emerald-300 font-bold">{finalResult.final_nodes != null ? `${finalResult.final_nodes} nodes (semantic)` : 'unknown'}</span>
                 {isAlreadyMinimal ? (
                   <span className="text-xs px-2 py-0.5 rounded bg-blue-900/60 border border-blue-500/40 text-blue-300 font-bold">
                     Already minimal

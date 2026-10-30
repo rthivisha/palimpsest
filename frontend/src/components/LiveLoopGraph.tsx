@@ -132,7 +132,7 @@ export const LiveLoopGraph: React.FC<LiveLoopGraphProps> = ({
           sublabel: 'AST Security Gate',
           icon: Shield,
           isActive: isParseActive,
-          stats: finalResult?.obf_nodes ? `${finalResult.obf_nodes} AST nodes` : undefined,
+          stats: finalResult?.obf_nodes ? `${finalResult.obf_nodes} nodes (semantic)` : undefined,
         },
       },
       {

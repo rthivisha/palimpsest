@@ -833,7 +833,9 @@ class TestHostHeaderAndREST:
         assert res_testserver_prod.status_code == 400
 
     def test_health_endpoint(self):
-        """GET /api/health returns solver, backend, and runtime status."""
+        """GET /api/health returns solver, backend, runtime status, and model_status."""
+        from backend.app.api.routes_meta import clear_health_cache
+        clear_health_cache()
         client = TestClient(app)
         res = client.get("/api/health")
         assert res.status_code == 200
@@ -841,8 +843,162 @@ class TestHostHeaderAndREST:
         assert data["status"] == "ok"
         assert data["backend"] == "fake"
         assert data["model_name"] == "fake-scripted"
+        assert data["model_status"] == "ready"
+        assert data["model_reachable"] is True
         assert "z3_version" in data
         assert data["z3_logic"] == "QF_BV (64-bit unsigned)"
+
+    def test_health_ollama_model_statuses(self, monkeypatch):
+        """Tests /api/health for each model_status: ready, ollama_not_running, model_missing, error."""
+        from backend.app.api.routes_meta import clear_health_cache
+        client = TestClient(app)
+
+        # 1. model_status = ready
+        clear_health_cache()
+        monkeypatch.setattr(settings, "PALIMPSEST_BACKEND", "ollama")
+        monkeypatch.setattr(settings, "BACKEND_FALLBACK", None)
+
+        class MockResponse:
+            def __init__(self, status_code, json_data):
+                self.status_code = status_code
+                self._json_data = json_data
+
+            def json(self):
+                return self._json_data
+
+        async def mock_get_ready(*args, **kwargs):
+            return MockResponse(200, {"models": [{"name": "palimpsest:latest"}]})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_ready)
+        res_ready = client.get("/api/health")
+        assert res_ready.status_code == 200
+        data_ready = res_ready.json()
+        assert data_ready["model_status"] == "ready"
+        assert data_ready["model_reachable"] is True
+        assert data_ready["hint"] is None
+        assert data_ready["fix_command"] is None
+
+        # 2. model_status = ollama_not_running
+        clear_health_cache()
+
+        async def mock_get_not_running(*args, **kwargs):
+            raise httpx.ConnectError("Connection refused")
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_not_running)
+        res_not_running = client.get("/api/health")
+        assert res_not_running.status_code == 200
+        data_not_running = res_not_running.json()
+        assert data_not_running["model_status"] == "ollama_not_running"
+        assert data_not_running["model_reachable"] is False
+        assert "Ollama is not running" in data_not_running["hint"]
+        assert data_not_running["fix_command"] == "ollama serve"
+
+        # 3. model_status = model_missing
+        clear_health_cache()
+
+        async def mock_get_model_missing(*args, **kwargs):
+            return MockResponse(200, {"models": [{"name": "qwen2.5:3b"}]})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_model_missing)
+        res_missing = client.get("/api/health")
+        assert res_missing.status_code == 200
+        data_missing = res_missing.json()
+        assert data_missing["model_status"] == "model_missing"
+        assert data_missing["model_reachable"] is False
+        assert "ollama create palimpsest -f Modelfile" in data_missing["fix_command"]
+
+        # 4. model_status = error
+        clear_health_cache()
+
+        async def mock_get_error(*args, **kwargs):
+            return MockResponse(500, {"error": "internal daemon error"})
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_error)
+        res_err = client.get("/api/health")
+        assert res_err.status_code == 200
+        data_err = res_err.json()
+        assert data_err["model_status"] == "error"
+        assert data_err["model_reachable"] is False
+
+    def test_health_caching_within_2s(self, monkeypatch):
+        """Verifies health check caches result for up to 2 seconds."""
+        from backend.app.api.routes_meta import clear_health_cache
+        clear_health_cache()
+        client = TestClient(app)
+        monkeypatch.setattr(settings, "PALIMPSEST_BACKEND", "ollama")
+
+        calls = 0
+
+        class MockResponse:
+            status_code = 200
+            def json(self):
+                return {"models": [{"name": "palimpsest"}]}
+
+        async def mock_get(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return MockResponse()
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+
+        # Call 1: probes
+        res1 = client.get("/api/health")
+        assert res1.status_code == 200
+        assert calls == 1
+
+        # Call 2 (immediate): served from cache
+        res2 = client.get("/api/health")
+        assert res2.status_code == 200
+        assert calls == 1  # No extra network probe
+
+    def test_health_no_fake_fallback_when_ollama_offline(self, monkeypatch):
+        """Verifies that Ollama failure never falls back silently or to fake."""
+        from backend.app.api.routes_meta import clear_health_cache
+        clear_health_cache()
+        client = TestClient(app)
+        monkeypatch.setattr(settings, "PALIMPSEST_BACKEND", "ollama")
+        monkeypatch.setattr(settings, "BACKEND_FALLBACK", None)
+
+        async def mock_get_down(*args, **kwargs):
+            raise httpx.ConnectError("Offline")
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_down)
+        res = client.get("/api/health")
+        data = res.json()
+        assert data["backend"] == "ollama"
+        assert data["model_status"] == "ollama_not_running"
+        assert data["is_fallback"] is False
+        assert data["backend"] != "fake"
+
+        # Even if someone sets BACKEND_FALLBACK=fake, it is ignored
+        clear_health_cache()
+        monkeypatch.setattr(settings, "BACKEND_FALLBACK", "fake")
+        res_fake_fallback = client.get("/api/health")
+        data_ff = res_fake_fallback.json()
+        assert data_ff["backend"] == "ollama"
+        assert data_ff["is_fallback"] is False
+        assert data_ff["backend"] != "fake"
+
+    def test_health_llamacpp_fallback_when_configured(self, monkeypatch):
+        """Verifies BACKEND_FALLBACK=llamacpp activates when Ollama is offline."""
+        from backend.app.api.routes_meta import clear_health_cache
+        import backend.app.api.routes_meta as rm
+        clear_health_cache()
+        client = TestClient(app)
+        monkeypatch.setattr(settings, "PALIMPSEST_BACKEND", "ollama")
+        monkeypatch.setattr(settings, "BACKEND_FALLBACK", "llamacpp")
+        monkeypatch.setattr(rm, "is_llamacpp_available", lambda: True)
+
+        async def mock_get_down(url, **kwargs):
+            raise httpx.ConnectError("Offline")
+
+        monkeypatch.setattr(httpx.AsyncClient, "get", mock_get_down)
+        res = client.get("/api/health")
+        data = res.json()
+        assert data["model_status"] == "ready"
+        assert data["model_reachable"] is True
+        assert data["is_fallback"] is True
+        assert data["fallback_backend"] == "llamacpp"
 
     def test_model_backend_env_logs_warning(self, monkeypatch, caplog):
         """Setting legacy MODEL_BACKEND triggers a loud warning on startup."""

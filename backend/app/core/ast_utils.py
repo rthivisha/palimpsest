@@ -21,6 +21,16 @@ from typing import List, Set, Union
 # Strict tuple of AST node types that contribute to node count
 COUNTED_NODE_TYPES = (ast.BinOp, ast.UnaryOp, ast.Name, ast.Constant)
 
+# Operator node types included in the training notebook's node counter
+TRAINING_COUNTED_NODE_TYPES = (
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Name,
+    ast.Constant,
+    ast.operator,
+    ast.unaryop,
+)
+
 
 def get_ast_node(expr_or_node: Union[str, ast.AST]) -> ast.AST:
     """Helper to convert either a string or an AST node into an AST node.
@@ -56,6 +66,26 @@ def count_nodes(expr_or_node: Union[str, ast.AST]) -> int:
     """
     tree = get_ast_node(expr_or_node)
     return sum(1 for node in ast.walk(tree) if isinstance(node, COUNTED_NODE_TYPES))
+
+
+def count_nodes_training(expr_or_node: Union[str, ast.AST]) -> int:
+    """Counts AST nodes matching the training notebook's node counter.
+
+    Includes operator nodes (ast.operator, ast.unaryop) such as ast.Add, ast.Mult,
+    ast.BitXor, alongside BinOp, UnaryOp, Name, and Constant.
+
+    Under this definition:
+    - '(x ^ y) + 2 * (x & y)' yields exactly 13 nodes (9 semantic + 4 operators).
+    - 'x + y' yields 4 nodes (3 semantic + 1 operator).
+
+    Args:
+        expr_or_node: Either a mathematical expression string or a parsed ast.AST.
+
+    Returns:
+        The integer count of AST nodes including operators.
+    """
+    tree = get_ast_node(expr_or_node)
+    return sum(1 for node in ast.walk(tree) if isinstance(node, TRAINING_COUNTED_NODE_TYPES))
 
 
 def extract_variables(expr_or_node: Union[str, ast.AST]) -> List[str]:

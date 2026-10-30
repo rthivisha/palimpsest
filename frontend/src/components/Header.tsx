@@ -125,6 +125,17 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
+          {/* Fallback Badge */}
+          {health?.is_fallback && (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-950/80 border border-amber-500/60 text-xs font-mono font-bold text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.25)] animate-pulse"
+              title="Ollama is unreachable; falling back to local llama.cpp backend"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>LLAMA.CPP (fallback)</span>
+            </div>
+          )}
+
           {/* SMT Solver Badge */}
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-900/50 bg-emerald-950/20 text-xs font-mono text-emerald-300"

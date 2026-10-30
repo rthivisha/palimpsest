@@ -5,6 +5,11 @@ import pytest
 
 from backend.app.core.outcomes import RunOutcome, EvalOutcome, determine_verified_outcome
 from backend.eval.harness import EvalConfig, EvalHarness, compute_wilson_interval, compute_percentiles
+from backend.eval.replay_training_rows import (
+    run_training_replay,
+    is_fixture_data,
+    load_real_training_dataset,
+)
 from backend.app.llm.fake import FakeLLMBackend
 
 
@@ -194,4 +199,27 @@ class TestOutcomeEnumAndSimplerRule:
         assert determine_verified_outcome(obf_nodes=3, cand_nodes=1, is_idempotent=True) == RunOutcome.VERIFIED
         # 3 nodes original vs 5 nodes candidate (idempotent) -> verified-not-simpler
         assert determine_verified_outcome(obf_nodes=3, cand_nodes=5, is_idempotent=True) == RunOutcome.VERIFIED_NOT_SIMPLER
+
+
+class TestReplayTrainingRows:
+    """Verifies the diagnostic replay script invariants and safety checks."""
+
+    def test_refuses_to_run_on_fake_backend(self, fixture_dataset_path):
+        """replay_training_rows.py strictly refuses to run on fake backend."""
+        with pytest.raises(ValueError, match="refuses to run on fake"):
+            run_training_replay(
+                dataset_path=fixture_dataset_path,
+                backend_name="fake",
+            )
+
+    def test_refuses_to_run_on_fixture_dataset(self, fixture_dataset_path):
+        """replay_training_rows.py strictly refuses to run on fixture/stub dataset."""
+        with pytest.raises(ValueError, match="refuses to run on fixture or stub data"):
+            load_real_training_dataset(fixture_dataset_path)
+
+    def test_fixture_detection_logic(self, fixture_dataset_path):
+        """Accurately detects fixture files based on path and metadata."""
+        assert is_fixture_data(fixture_dataset_path, [{"id": "fix_001", "source": "fixture, not dataset"}]) is True
+        real_sample = [{"id": "sft_1", "conversations": [{"from": "user", "value": "x"}]}] * 30
+        assert is_fixture_data("backend/data/dataset.jsonl", real_sample) is False
 

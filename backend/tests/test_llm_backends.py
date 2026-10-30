@@ -6,8 +6,11 @@ Verifies:
 3. llama-cpp-python backend lazy loading, model file existence checks, and cancellation.
 4. Backend factory instantiation and error handling.
 """
+import asyncio
 import io
 import json
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -104,6 +107,8 @@ class TestPromptFormatTrainingExact:
         captured_calls = []
 
         class SpyBackend(BaseLLMBackend):
+            backend_name = "fake"
+
             def generate(self, messages, temperature=0.2, max_tokens=512, should_cancel=None):
                 captured_calls.append(list(messages))
                 if len(captured_calls) == 1:
@@ -176,13 +181,12 @@ class TestPromptFormatTrainingExact:
             "Expected: 2, Actual: 0"
         )
 
-    def test_golden_string_rendered_2turn_chatml_both_backends(self):
-        """Golden-string test verifying 2-turn rendered ChatML for Ollama and llama-cpp backends.
+    def test_golden_string_rendered_2turn_chatml_both_profiles(self):
+        """Golden-string test verifying 2-turn rendered ChatML for both 'plain' and 'unsloth_qwen25' profiles.
 
-        Ensures character-for-character compliance with fine-tuning contract:
-        - Starts strictly with `<|im_start|>user\\n` on index 0 (no leading whitespace or newline).
-        - Exactly one newline after each `<|im_end|>`.
-        - Ends with `<|im_start|>assistant\\n` priming generation.
+        Ensures character-for-character compliance with training format:
+        - Profile 'plain': Starts with <|im_start|>user, standard Z3 feedback.
+        - Profile 'unsloth_qwen25': System message first, retry content inside <tool_response>...</tool_response>.
         """
         history_t2 = [
             {
@@ -195,15 +199,17 @@ class TestPromptFormatTrainingExact:
                 "actual": 0,
             }
         ]
-        messages = build_messages(
+
+        # 1. Profile: plain
+        messages_plain = build_messages(
             obfuscated_expr="(x ^ y) + 2 * (x & y)",
             history=history_t2,
             tool_role="user",
             system_prompt="",
             history_mode="last",
+            prompt_profile="plain",
         )
-
-        golden_2turn_chatml = (
+        golden_plain = (
             "<|im_start|>user\n"
             "De-obfuscate this 64-bit MBA expression:\n"
             "(x ^ y) + 2 * (x & y)<|im_end|>\n"
@@ -218,24 +224,82 @@ class TestPromptFormatTrainingExact:
             "Expected: 2, Actual: 0<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
+        rendered_plain = render_chatml_prompt(messages_plain)
+        assert rendered_plain == golden_plain
+        assert rendered_plain.startswith("<|im_start|>user\n")
+        assert rendered_plain.endswith("<|im_start|>assistant\n")
 
-        rendered = render_chatml_prompt(messages)
+        # 2. Profile: unsloth_qwen25 (exact training format)
+        messages_unsloth = build_messages(
+            obfuscated_expr="(x ^ y) + 2 * (x & y)",
+            history=history_t2,
+            history_mode="last",
+            prompt_profile="unsloth_qwen25",
+        )
+        golden_unsloth = (
+            "<|im_start|>system\n"
+            "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n"
+            "<|im_start|>user\n"
+            "De-obfuscate this 64-bit MBA expression:\n"
+            "(x ^ y) + 2 * (x & y)<|im_end|>\n"
+            "<|im_start|>assistant\n"
+            "<think>\n"
+            "Analyzing MBA expression...\n"
+            "</think>\n"
+            "(x + y) - 1<|im_end|>\n"
+            "<|im_start|>user\n"
+            "<tool_response>\n"
+            "Z3_VERIFICATION_FAILED: SAT\n"
+            "Counterexample Witness: {'x': 1, 'y': 1}\n"
+            "Expected: 2, Actual: 0\n"
+            "</tool_response><|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+        rendered_unsloth = render_chatml_prompt(messages_unsloth)
+        assert rendered_unsloth == golden_unsloth
+        assert rendered_unsloth.startswith("<|im_start|>system\n")
+        assert (
+            "\n<tool_response>\n"
+            "Z3_VERIFICATION_FAILED: SAT\n"
+            "Counterexample Witness: {'x': 1, 'y': 1}\n"
+            "Expected: 2, Actual: 0\n"
+            "</tool_response><|im_end|>"
+        ) in rendered_unsloth
+        assert rendered_unsloth.endswith("<|im_start|>assistant\n")
 
-        # 1. Exact character-for-character equality
-        assert rendered == golden_2turn_chatml
+        # 3. Backend equivalence: both Ollama template and llama.cpp render the exact same text
+        # llama.cpp uses render_chatml_prompt(messages_unsloth)
+        rendered_llamacpp = render_chatml_prompt(messages_unsloth)
+        assert rendered_llamacpp == golden_unsloth
 
-        # 2. Assert no leading newline or leading whitespace
-        assert rendered.startswith("<|im_start|>user\n")
-        assert not rendered.startswith("\n")
-        assert not rendered.startswith(" ")
+        # Ollama evaluates the teammate's Modelfile TEMPLATE with system message and <tool_response> turn
+        system_content = messages_unsloth[0]["content"]
+        non_sys_messages = [m for m in messages_unsloth if m["role"] != "system"]
 
-        # 3. Assert exactly one newline after each <|im_end|>
-        assert "<|im_end|>\n<|im_start|>" in rendered
-        assert "<|im_end|>\n\n<|im_start|>" not in rendered
-        assert "<|im_end|><|im_start|>" not in rendered
+        def render_ollama_template(system: str, msgs: list) -> str:
+            out = []
+            if system:
+                out.append(f"<|im_start|>system\n{system}<|im_end|>\n")
+            n = len(msgs)
+            for i, m in enumerate(msgs):
+                is_last = (i == n - 1)
+                role = m["role"]
+                content = m["content"]
+                if role == "user":
+                    out.append(f"<|im_start|>user\n{content}<|im_end|>\n")
+                elif role == "assistant":
+                    out.append(f"<|im_start|>assistant\n{content}")
+                    if not is_last:
+                        out.append("<|im_end|>\n")
+                elif role == "tool":
+                    out.append(f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n")
+                if role != "assistant" and is_last:
+                    out.append("<|im_start|>assistant\n")
+            return "".join(out)
 
-        # 4. Assert ends with assistant priming token
-        assert rendered.endswith("<|im_start|>assistant\n")
+        rendered_ollama = render_ollama_template(system_content, non_sys_messages)
+        assert rendered_ollama == golden_unsloth
+        assert rendered_ollama == rendered_llamacpp
 
     def test_configurable_repeated_candidate_temperature_bump(self):
         """Verifies configurable temperature bump on repeated candidate generation."""
@@ -454,6 +518,137 @@ class TestLlamaCppBackend:
                     should_cancel=lambda: cancelled,
                 )
             assert "cancelled by client disconnect" in str(exc_info.value).lower()
+
+
+class TestOllamaBackendRetryAndNoFakeFallback:
+    """Verifies OllamaBackend retries once on connection refusal before tokens arrive,
+    raises on second failure, emits a single error event in routes_run, and never falls back to fake.
+    """
+
+    def test_ollama_retry_once_on_connection_refusal_then_succeed(self, monkeypatch):
+        """OllamaBackend retries once after 1s if connection refused before tokens arrive."""
+        backend = OllamaBackend(base_url="http://127.0.0.1:11434", model_name="palimpsest")
+        sleeps = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+
+        attempts = 0
+
+        class MockStreamResponse:
+            status_code = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def iter_lines(self):
+                yield json.dumps({"message": {"content": "x + y"}, "done": True})
+
+        class MockClient:
+            def __init__(self, timeout=None):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def stream(self, method, url, **kwargs):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise httpx.ConnectError("Connection refused")
+                return MockStreamResponse()
+
+        monkeypatch.setattr(httpx, "Client", MockClient)
+
+        result = backend.generate([{"role": "user", "content": "simplify"}])
+        assert result == "x + y"
+        assert attempts == 2
+        assert sleeps == [1.0]
+
+    def test_ollama_second_connection_refusal_raises_error_no_fake_fallback(self, monkeypatch):
+        """After second connection refusal, raises LLMBackendError with no fake fallback."""
+        backend = OllamaBackend(base_url="http://127.0.0.1:11434", model_name="palimpsest")
+        sleeps = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+
+        class FailingClient:
+            def __init__(self, timeout=None):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def stream(self, method, url, **kwargs):
+                raise httpx.ConnectError("Connection refused")
+
+        monkeypatch.setattr(httpx, "Client", FailingClient)
+
+        with pytest.raises(LLMBackendError) as exc_info:
+            backend.generate([{"role": "user", "content": "simplify"}])
+
+        assert "Ollama is not running" in str(exc_info.value)
+        assert len(sleeps) == 1  # Retried once after 1s
+
+    def test_ollama_error_produces_single_error_event_in_routes_run(self, monkeypatch):
+        """When Ollama backend fails, run_synthesis_worker emits a single error event and terminates."""
+        from backend.app.api.routes_run import run_synthesis_worker
+        from backend.app.telemetry.db import telemetry_db
+
+        class AlwaysFailingBackend(BaseLLMBackend):
+            def generate(self, messages, **kwargs):
+                raise LLMBackendError("Ollama is not running at http://127.0.0.1:11434")
+
+        loop = asyncio.new_event_loop()
+        event_queue = asyncio.Queue()
+        cancel_event = threading.Event()
+        run_id = "test-error-single-event"
+
+        telemetry_db.record_run({
+            "run_id": run_id,
+            "expression": "(x ^ y) + 2 * (x & y)",
+            "obf_nodes": 9,
+            "final_status": "RUNNING",
+            "backend": "ollama",
+            "model_name": "palimpsest",
+            "max_iterations": 3,
+        })
+
+        run_synthesis_worker(
+            run_id=run_id,
+            expression="(x ^ y) + 2 * (x & y)",
+            max_iterations=3,
+            backend_name="ollama",
+            obf_nodes=9,
+            loop=loop,
+            event_queue=event_queue,
+            cancel_event=cancel_event,
+            backend=AlwaysFailingBackend(),
+            model_name="palimpsest",
+        )
+
+        # Drain scheduled callbacks on the test loop
+        loop.run_until_complete(asyncio.sleep(0.05))
+
+        events = []
+        while not event_queue.empty():
+            events.append(event_queue.get_nowait())
+
+        event_types = [e[0] for e in events]
+        # Assert exactly one "error" event is emitted
+        error_events = [e for e in events if e[0] == "error"]
+        assert len(error_events) == 1
+        assert "Ollama is not running" in error_events[0][1]["error"]
+
+        # Final sentinel is emitted (None, None)
+        assert events[-1] == (None, None)
+        loop.close()
 
 
 class TestBackendFactory:

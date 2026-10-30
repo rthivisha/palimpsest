@@ -96,11 +96,37 @@ CURATED_EXAMPLES: List[Dict[str, Any]] = [
 ]
 
 
+# Health probe cache: caches result for at most 2 seconds
+_health_cache: Dict[str, Any] = {"timestamp": 0.0, "data": None}
+
+
+def clear_health_cache() -> None:
+    """Utility to invalidate health check cache in tests."""
+    _health_cache["timestamp"] = 0.0
+    _health_cache["data"] = None
+
+
+def is_llamacpp_available() -> bool:
+    """Checks if llama_cpp package is importable and model GGUF exists on disk."""
+    import os
+    try:
+        import llama_cpp  # noqa: F401
+        return os.path.exists(settings.LLAMACPP_MODEL_PATH)
+    except ImportError:
+        return False
+
+
 @router.get("/health")
-async def health_check() -> Dict[str, Any]:
+async def health_check(force_refresh: bool = False) -> Dict[str, Any]:
     """Returns runtime health status for solver, backends, and telemetry."""
     import os
+    import time
     import httpx
+
+    # Return cached health status if fresh (< 2 seconds old)
+    now = time.time()
+    if not force_refresh and (now - _health_cache["timestamp"] < 2.0) and (_health_cache["data"] is not None):
+        return _health_cache["data"]
 
     z3_version = z3.get_version_string()
     backend_name = settings.PALIMPSEST_BACKEND
@@ -113,12 +139,24 @@ async def health_check() -> Dict[str, Any]:
     else:
         model_name = "fake-scripted"
 
-    # Real model reachable check
+    # Default statuses
     model_reachable = True
     model_unreachable_reason = None
+    model_status = "ready"
+    hint: Optional[str] = None
+    fix_command: Optional[str] = None
+    is_fallback = False
+    fallback_backend: Optional[str] = None
+
+    fallback_requested = (settings.BACKEND_FALLBACK or "").lower().strip() in (
+        "llamacpp",
+        "llama_cpp",
+        "llama-cpp",
+    )
+
     if backend_name == "ollama":
         try:
-            async with httpx.AsyncClient(timeout=1.5) as client:
+            async with httpx.AsyncClient(timeout=1.0) as client:
                 res = await client.get(f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags")
                 if res.status_code == 200:
                     data = res.json()
@@ -126,20 +164,79 @@ async def health_check() -> Dict[str, Any]:
                     target = settings.OLLAMA_MODEL
                     found = any(target == m or m.startswith(f"{target}:") for m in models)
                     if found:
+                        model_status = "ready"
                         model_reachable = True
+                        model_unreachable_reason = None
+                        hint = None
+                        fix_command = None
                     else:
+                        model_status = "model_missing"
                         model_reachable = False
                         model_unreachable_reason = f"Model '{target}' not found; run ollama create {target} -f Modelfile"
+                        hint = f"Model '{target}' not found in Ollama catalog"
+                        fix_command = f"ollama create {target} -f Modelfile"
                 else:
-                    model_reachable = False
-                    model_unreachable_reason = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
-        except Exception:
-            model_reachable = False
-            model_unreachable_reason = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
+                    # Non-200 HTTP response from Ollama daemon
+                    if fallback_requested and is_llamacpp_available():
+                        model_status = "ready"
+                        model_reachable = True
+                        is_fallback = True
+                        fallback_backend = "llamacpp"
+                        hint = f"Ollama HTTP {res.status_code}; active fallback: llama.cpp"
+                    else:
+                        model_status = "error"
+                        model_reachable = False
+                        model_unreachable_reason = f"Ollama returned HTTP {res.status_code}"
+                        hint = f"Ollama daemon returned HTTP {res.status_code}"
+                        fix_command = None
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            if fallback_requested and is_llamacpp_available():
+                model_status = "ready"
+                model_reachable = True
+                is_fallback = True
+                fallback_backend = "llamacpp"
+                hint = "Ollama is not running; active fallback: llama.cpp"
+            else:
+                model_status = "ollama_not_running"
+                model_reachable = False
+                model_unreachable_reason = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
+                hint = f"Ollama is not running at {settings.OLLAMA_BASE_URL}"
+                fix_command = "ollama serve"
+        except Exception as exc:
+            if fallback_requested and is_llamacpp_available():
+                model_status = "ready"
+                model_reachable = True
+                is_fallback = True
+                fallback_backend = "llamacpp"
+                hint = f"Ollama error ({exc}); active fallback: llama.cpp"
+            else:
+                model_status = "error"
+                model_reachable = False
+                model_unreachable_reason = f"Ollama probe error: {exc}"
+                hint = str(exc)
+                fix_command = None
+
     elif backend_name in ("llamacpp", "llama_cpp", "llama-cpp"):
         model_reachable = os.path.exists(settings.LLAMACPP_MODEL_PATH)
-        if not model_reachable:
+        if model_reachable:
+            model_status = "ready"
+            hint = None
+            fix_command = None
+        else:
+            model_status = "model_missing"
             model_unreachable_reason = f"Model file not found at {settings.LLAMACPP_MODEL_PATH}"
+            hint = f"Model file not found at {settings.LLAMACPP_MODEL_PATH}"
+            fix_command = None
+    else:
+        # Fake backend
+        model_status = "ready"
+        model_reachable = True
+        hint = (
+            "Scripted demo model: only the Classic 2-Turn Demo is solvable"
+            if backend_name == "fake"
+            else None
+        )
+        fix_command = None
 
     fake_hint = (
         "Scripted demo model: only the Classic 2-Turn Demo is solvable"
@@ -147,17 +244,26 @@ async def health_check() -> Dict[str, Any]:
         else None
     )
 
-    return {
+    result = {
         "status": "ok",
         "backend": backend_name,
         "model_name": model_name,
         "model_reachable": model_reachable,
         "model_unreachable_reason": model_unreachable_reason,
+        "model_status": model_status,
+        "hint": hint,
+        "fix_command": fix_command,
+        "is_fallback": is_fallback,
+        "fallback_backend": fallback_backend,
         "fake_hint": fake_hint,
         "z3_version": z3_version,
         "z3_logic": "QF_BV (64-bit unsigned)",
         "langsmith_tracing": settings.LANGSMITH_TRACING,
     }
+
+    _health_cache["timestamp"] = now
+    _health_cache["data"] = result
+    return result
 
 
 @router.get("/stats")

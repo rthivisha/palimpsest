@@ -6,7 +6,7 @@ This document specifies the rigorous evaluation methodology, outcome accounting,
 
 ## 1. Evaluation Architecture & Pipeline Integrity
 
-The evaluation harness (`backend/eval/run_eval.py`) executes directly against the production runtime components to guarantee zero divergence between benchmark measurements and real-world behavior:
+The evaluation harness (`backend/eval/run_eval.py`) executes directly against the production runtime components to prevent divergence between benchmark measurements and real-world behavior:
 
 1. **Real Graph & Message Builder**: The harness invokes `prompts.build_messages` and executes the compiled LangGraph state machine (`backend.app.graph.build.build_graph`) without mocks or mock edge routers.
 2. **Strict Refusal of Mock Backends**: The harness **strictly refuses** to evaluate against `FakeLLMBackend` by default. If `PALIMPSEST_BACKEND=fake` is active, the harness aborts immediately with exit code `2` and an explicit refusal message unless the operator explicitly passes `--allow-fake`. This prevents accidental publication of synthetic numbers.
@@ -22,7 +22,7 @@ The evaluation corpus (`backend/data/samples.jsonl`) contains distinct partition
 
 ### A. Validation Split (`--split validation`)
 - Generator-produced expressions that were **strictly excluded from the fine-tuning training corpus** (derived from the teammate's clean validation split).
-- **Normalised Target Guarantee**: All validation rows are held out by **normalised target**. No expression in the validation split shares an algebraically normalised canonical target form (e.g. `x + y`, `x ^ y`, `~x`) with expressions present in the fine-tuning training set. This strictly proves algebraic generalization rather than rote memorization of canonical outcomes.
+- **Normalised Target Criterion**: All validation rows are held out by **normalised target**. No expression in the validation split shares an algebraically normalised canonical target form (e.g. `x + y`, `x ^ y`, `~x`) with expressions present in the fine-tuning training set. This strictly tests algebraic generalization rather than rote memorization of canonical outcomes.
 
 ### B. External Benchmark (`--external`)
 - Non-generator expressions collected from literature, real-world binary obfuscators (e.g., Tigress, MBA-blast), opaque predicates, and higher-degree polynomial expansions.
@@ -121,8 +121,11 @@ Every evaluation execution prints an exhaustive reproducibility header:
 - **GGUF SHA-256**: Cryptographic hash of the `.gguf` weights.
 - **Sampling Temperature**: Base temperature and repeated-candidate bump increment (`TEMP_RETRY_INCREMENT`).
 - **History Mode**: Replay strategy (`last` or `all`).
-- **System Prompt**: Content of `SYSTEM_PROMPT` (or `[empty]`).
+- **Prompt Profile**: `PROMPT_PROFILE` (`plain` or `unsloth_qwen25`).
+- **Witness Policy**: `WITNESS_POLICY` (`z3_default` or `bounded`).
 - **Shift Semantics**: `SHIFT_SEMANTICS` (`z3` or `x86_masked`).
+- **RShift Semantics**: `RSHIFT_SEMANTICS` (`logical` or `arithmetic`).
+- **System Prompt**: Content of `SYSTEM_PROMPT` (or `[empty]`).
 - **Max AST Depth**: `MAX_AST_DEPTH` (default 100).
 - **Tool Role**: Role identifier used for Z3 feedback turns (`user` or `tool`).
 - **Num Predict**: Maximum generation tokens (`NUM_PREDICT`, default 512).
@@ -142,8 +145,11 @@ Backend:            <backend_str> (<model_name>)
 GGUF SHA-256:       <sha256_hash>
 Base Temperature:   <base_temp> (repeated-candidate bump: +<bump_inc>)
 History Mode:       <last|all>
+Prompt Profile:     <plain|unsloth_qwen25>
+Witness Policy:     <z3_default|bounded>
 System Prompt:      <prompt_content_or_none>
 Shift Semantics:    <z3|x86_masked>
+RShift Semantics:   <logical|arithmetic>
 Max AST Depth:      <max_depth_int>
 Tool Role:          <user|tool>
 Num Predict:        <num_predict_int>
@@ -177,7 +183,9 @@ Latency & Performance by Tier:
     Model Latency:   p50 = <val> ms | p95 = <val> ms
 
 Mean Attempts (Successful):  <val>
-Mean AST Node Reduction:     <val>%
+Mean AST Node Reduction:
+  Figure 1 (Semantic: BinOp/UnaryOp/Name/Const): <val>%  [Demo: 9 nodes]
+  Figure 2 (Training: Operators included):       <val>%  [Demo: 13 nodes]
 ================================================================================
 ```
 

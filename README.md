@@ -1,168 +1,354 @@
-<div align="center">
-<pre>
-██████╗  █████╗ ██╗     ██╗███╗   ███╗██████╗ ███████╗███████╗███████╗████████╗
-██╔══██╗██╔══██╗██║     ██║████╗ ████║██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝
-██████╔╝███████║██║     ██║██╔████╔██║██████╔╝███████╗█████╗  ███████╗   ██║   
-██╔═══╝ ██╔══██║██║     ██║██║╚██╔╝ ██║██╔═══╝   ╚════██║██╔══╝  ╚════██║   ██║   
-██║     ██║  ██║███████╗██║██║ ╚═╝ ██║██║     ███████║███████╗███████║   ██║   
-╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚══════╝   ╚═╝   
-</pre>
+PALIMPSEST (Codename: VEX-MORPH)
+A fully local, proof-first, neurosymbolic 64-bit Mixed Boolean-Arithmetic (MBA) de-obfuscation engine with formal SMT equivalence proofs.
 
-<p><strong>[ CODENAME: VEX-MORPH // 64-BIT QF_BV ]</strong></p>
-<h1>PALIMPSEST</h1>
-<h3>A Fully Local, Proof-First, Neurosymbolic 64-Bit Mixed Boolean-Arithmetic (MBA) De-Obfuscation Engine with Formal SMT Equivalence Proofs</h3>
-<p>
-  <a href="#-why-palimpsest">Why PALIMPSEST</a> •
-  <a href="#-architecture-overview">Architecture &amp; CEGIS Loop</a> •
-  <a href="#-ollama-cli-proof-example">Live Proof Trace</a> •
-  <a href="#-quickstart">Quickstart</a> •
-  <a href="#️-environment-variables">Configuration</a> •
-  <a href="#-model-integration-guide">Model Backends</a> •
-  <a href="#-sample-data-and-test-cases">Benchmarks &amp; Tests</a>
-</p>
-</div>
+PALIMPSEST is a local, zero-trust system for simplifying obfuscated arithmetic and bitwise expressions by combining a small local language model with Microsoft Z3 formal verification. The model proposes candidate rewrites, the solver checks them, and a CEGIS-style retry loop feeds back counterexamples until an equivalence-verified canonical form is reached.
 
----
+> [!NOTE]
+> **Scope & Verification**: Trained on a fixed family of MBA patterns; expressions outside it may not verify. Z3 rejects any unproven answer. Equivalence proven by Z3 (QF_BV, 64-bit).
 
-## ⚡ Overview
+This repository implements the exact workflow shown in the live UI:
 
-PALIMPSEST (VEX-MORPH) is a local, zero-trust neurosymbolic system built to simplify obfuscated 64-bit arithmetic and bitwise expressions by pairing a small local language model with Microsoft Z3 formal verification.
+parse AST
+propose a candidate rewrite
+verify via Z3
+recover a SAT counterexample
+retry with witness-guided repair
+accept only formally verified equivalence
+Overview
+PALIMPSEST addresses a common reverse-engineering problem: real-world obfuscators rewrite simple expressions into large identities that are hard to simplify by inspection. Examples include:
 
-Real-world binary obfuscators routinely conceal simple logic inside bloated algebraic identities that resist manual inspection:
+Mixed Boolean-Arithmetic (MBA)
+opaque zero terms
+control-flow flattening patterns
+algebraic identity rewrites that preserve semantic output but hide the true expression
+Instead of trusting a monolithic LLM guess, PALIMPSEST enforces a strict proof-first loop:
 
-- Mixed Boolean-Arithmetic (MBA) expressions
-- Opaque zero terms
-- Control-flow flattening patterns
-- Algebraic identity rewrites that preserve semantic output while hiding the true underlying expression
+Parse the input into a security-guarded AST.
+Proposal stage: a small local model suggests a simplified candidate.
+Verification stage: Z3 checks equivalence over 64-bit bit-vectors (QF_BV).
+Counterexample loop: if z3 finds SAT, it emits a witness and the model retries.
+Accept only proven equivalent outputs.
+Why PALIMPSEST
+Obfuscated arithmetic and bitwise expressions often hide a simple identity like x + y inside a large algebraic rewrite. Generic decompilers and monolithic LLMs often fail because they do not prove equivalence.
 
-> [!IMPORTANT]
-> **The Proof-First Mandate:** Instead of trusting a monolithic LLM guess, PALIMPSEST enforces a strict Counterexample-Guided Inductive Synthesis (CEGIS) loop. The local model proposes candidate rewrites, Z3 checks semantic equivalence over 64-bit bit-vectors (QF_BV), and any falsifying SAT counterexample is fed back to repair the candidate until a mathematically proven canonical form is reached.
+PALIMPSEST avoids that trap by enforcing a strict proof-first loop:
 
-### The 6-Stage Verification Pipeline
+parse input into a constrained AST
+propose a candidate simplification with a local model
+verify equivalence in Z3 over 64-bit bit-vectors (QF_BV)
+extract SAT counterexamples when the rewrite is wrong
+feed the witness back into the model for repair
+output only results that pass formal verification
+UI / Product Snapshot
+The dashboard mirrors the architecture of the project and exposes a live proof workflow:
 
-1. **`parse_ast`** — Parse the raw input into a security-guarded, constrained Abstract Syntax Tree (AST).
-2. **`propose`** — Generate a simplified candidate expression using a local model (fake, ollama, or llamacpp).
-3. **`verify`** — Check formal semantic equivalence in Microsoft Z3 over 64-bit bit-vectors (QF_BV).
-4. **Recover SAT Counterexample** — Extract a concrete falsifying bit-vector witness whenever a candidate rewrite is wrong.
-5. **Witness-Guided Repair** — Feed the exact counterexample and 64-bit discrepancy back into the model context for iterative retry.
-6. **Verified Output Only** — Emit the simplified expression only after Z3 returns UNSAT on the inequivalence miter (VERIFIED EQUIVALENT).
-
----
-
-## 🎯 Why PALIMPSEST
-
-Obfuscated expressions routinely hide a trivial operation like `x + y` inside a complex algebraic identity such as `(x ^ y) + 2 * (x & y)`. Generic decompilers and standalone LLMs fail in high-assurance reverse engineering because pattern-matching misses novel mutations and raw LLMs hallucinate plausible-looking expressions that break edge cases.
-
-| Capability | Generic Decompilers | Monolithic LLMs | PALIMPSEST (VEX-MORPH) |
-|---|---|---|---|
-| Handles Novel MBA Mutations | ❌ Rule-bound | ✅ Heuristic | ✅ Neurosymbolic Synthesis |
-| Formal 64-Bit Equivalence Proof | ⚠️ Partial | ❌ Hallucinates | ✅ Z3 QF_BV Verified (UNSAT) |
-| Counterexample Self-Repair | ❌ None | ❌ Single-shot | ✅ Witness-Guided CEGIS Loop |
-| Air-Gapped Local Execution | ✅ Local | ❌ Often Cloud API | ✅ 100% Local (ollama / llamacpp) |
-| Execution Safety Gate | ✅ Safe | ⚠️ Unchecked | ✅ Strict AST Allowlist (No `eval()`) |
-
----
-
-## 🖥️ UI / Product Snapshot
-
-The Vite + React dashboard mirrors the underlying LangGraph state machine and exposes the live formal verification workflow in real time:
-
-- **De-obfuscator Workspace** — Live expression input, AST metrics, and synthesis controls.
-- **History & Insights** — SQLite-backed telemetry for past runs and attempt trajectories.
-- **Dataset Explorer** — Browse and test curated MBA benchmark identities.
-- **Z3 QF_BV Status & Proof Banner** — Displays verified canonical form and exact AST node reduction percentage.
-- **LangGraph Execution Graph** — Real-time visual state tracking across parser, model, and solver nodes.
-- **Live Counterexample Diagnostics** — Inspect SAT witness assignments and 64-bit bitwise discrepancies across iterations.
-
-### Example Live UI State Transition
-
-```diff
-  Original Obfuscated Input : (x ^ y) + 2 * (x & y)
-- Candidate (Iteration 1)   : (x + y) - 1
-- Z3 Solver Status          : SAT (Counterexample Witness: {'x': 0, 'y': 1})
-+ Retry Candidate (Iter 2)  : x + y
-+ Final Verification Result : VERIFIED EQUIVALENT (UNSAT on Miter)
-```
-
----
-
-## 🏗️ Architecture Overview
-
-### 1. LangGraph State Machine
-
-```mermaid
+De-obfuscator
+History & Insights
+Dataset Explorer
+Z3 QF_BV status
+LangGraph execution graph
+proof banner with canonical form and AST reduction
+live counterexample diagnostics
+Example UI state
+Original obfuscated input: (x ^ y) + 2 * (x & y)
+Candidate (iteration 1): (x + y) - 1
+Z3 result: SAT
+Counterexample witness: {'x': 0, 'y': 1}
+Retry candidate: x + y
+Final result: VERIFIED EQUIVALENT
+Current Repository Capabilities
+FastAPI backend with local orchestration
+LangGraph-based graph loop and retry routing
+Z3 verification for 64-bit arithmetic / bitwise equivalence
+local model support for fake, ollama, and llamacpp
+Vite + React frontend for live execution and proof visualization
+SQLite telemetry for runs and attempt history
+test coverage for API, graph routing, and verification behavior
+Repository Layout
+Text
+palimpsest/
+├── .env.example
+├── ARCHITECTURE.md
+├── LICENSE
+├── README.md
+├── TASKS.md
+├── backend/
+│   ├── app/
+│   ├── requirements.txt
+│   └── tests/
+├── examples/
+│   ├── README.md
+│   └── sample_mba_cases.json
+├── frontend/
+│   ├── package.json
+│   └── src/
+├── models/
+├── package.json
+├── pytest.ini
+├── training/
+│   ├── ast_slicer.py
+│   ├── dataset_generator.py
+│   ├── mba_mutator.py
+│   └── z3_verifier.py
+├── .gitignore
+├── Modelfile
+├── scripts/
+└── palimpsest.sqlite   # generated locally
+Architecture Overview
+Mermaid
 flowchart TD
-    classDef entry fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#f8fafc
-    classDef gate fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#f8fafc
-    classDef model fill:#0f172a,stroke:#a855f7,stroke-width:2px,color:#f8fafc
-    classDef solver fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
-    classDef fail fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#f8fafc
-    classDef win fill:#14532d,stroke:#4ade80,stroke-width:3px,color:#ffffff
-
-    User([User / React UI]):::entry --> API[FastAPI Backend]:::entry
-    API --> Graph[LangGraph Orchestrator]:::entry
-    Graph --> Parse[parse_ast]:::gate
-    Parse --> Safe{Safe AST?}:::gate
-    Safe -->|No| Reject[REJECTED_UNSAFE]:::fail
-    Safe -->|Yes| Propose[propose]:::model
-    Propose --> Model[Local Model Backend<br/>fake / ollama / llamacpp]:::model
-    Model --> Candidate[Candidate Expression]:::model
-    Candidate --> Verify[verify<br/>Z3 64-Bit QF_BV]:::solver
-    Verify --> Check{Equivalent?}:::solver
-    Check -->|SAT: Witness Found| Retry[Counterexample Feedback<br/>& Temp Increment]:::fail
-    Retry -->|Under Max Iterations| Propose
-    Retry -->|Retries Exhausted| Fail[finalize_fail]:::fail
-    Check -->|UNSAT: Proven| Success[finalize_success<br/>VERIFIED EQUIVALENT]:::win
+    User([User / UI]) --> API[FastAPI API]
+    API --> Graph[LangGraph Orchestrator]
+    Graph --> Parse[parse_ast]
+    Parse --> Safe{Safe AST?}
+    Safe -->|No| Reject[REJECTED_UNSAFE]
+    Safe -->|Yes| Propose[propose]
+    Propose --> Model[Local Model Backend]
+    Model --> Candidate[Candidate Expression]
+    Candidate --> Verify[verify]
+    Verify --> Check{Equivalent?}
+    Check -->|SAT| Retry[Counterexample Feedback]
+    Retry --> Propose
+    Check -->|UNSAT| Success[Verified Equivalent]
+System Components
+parse_ast: validates the expression and rejects unsafe input
+propose: local model proposes a candidate rewrite
+verify: Z3 checks equivalence in QF_BV
+router: decides whether to retry or finalize
+finalize_success: emits the proven canonical form
+finalize_fail: emits a failure state when retries are exhausted
+Features
+local-only model execution
+strict AST validation and safety gate
+64-bit QF_BV verification using Z3
+proof-first output only
+iterative retry loop on SAT counterexamples
+live web UI with execution graph and proof display
+SQLite telemetry and run history
+benchmark examples and automated tests
+Quickstart
+Prerequisites
+Python 3.10+
+Node.js 18+
+npm
+Optional: Ollama or a local llama.cpp GGUF model
+### 1. Clone the repository
+```bash
+git clone https://github.com/rthivisha/palimpsest.git
+cd palimpsest
 ```
 
-### 2. CEGIS Runtime Sequence
+### 2. Create and activate a virtual environment
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor RE as Reverse Engineer / UI
-    participant API as FastAPI + LangGraph
-    participant AST as parse_ast (Safety Gate)
-    participant LLM as Local Model (propose)
-    participant Z3 as Microsoft Z3 (verify QF_BV)
-
-    RE->>API: Submit "(x ^ y) + 2 * (x & y)"
-    API->>AST: Validate syntax, depth (<=100), allowlist
-    AST-->>API: Valid AST (9 Semantic Nodes)
-
-    loop CEGIS Loop (Up to MAX_ITERATIONS)
-        API->>LLM: Prompt for canonical rewrite
-        LLM-->>API: Candidate: "(x + y) - 1"
-        API->>Z3: Check Miter: Original != Candidate (64-bit BV)
-        alt Counterexample Found (SAT)
-            Z3-->>API: SAT Witness: {x: 0, y: 1} + 64-bit diff
-            API->>LLM: Inject witness & discrepancy into context
-        else Proven Equivalent (UNSAT)
-            Z3-->>API: UNSAT (Formal Proof Complete)
-        end
-    end
-
-    API->>RE: Emit "x + y" (AST Reduced by 66.67%)
+**PowerShell (Windows):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 ```
 
-### Core System Components
+**Command Prompt (Windows):**
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+```
 
-| Node / Module | Responsibility |
-|---|---|
-| `parse_ast` | Validates the input expression, enforces depth/length bounds, and rejects unsafe syntax. |
-| `propose` | Invokes the configured local model backend to synthesize a simplified candidate rewrite. |
-| `verify` | Checks 64-bit bitwise and arithmetic equivalence using Microsoft Z3 (QF_BV). |
-| `router` | Evaluates solver status and iteration count to route between witness retry and finalization. |
-| `finalize_success` | Packages and emits the formally proven canonical form and AST reduction telemetry. |
-| `finalize_fail` | Safely terminates execution and emits a failure diagnostic when MAX_ITERATIONS is exhausted. |
+**macOS / Linux:**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
----
+### 3. Install Python dependencies
+```bash
+pip install -r backend/requirements.txt
+```
 
-## 🔬 Ollama CLI Proof Example
+### 4. Install frontend dependencies
+```bash
+npm install
+npm --prefix frontend install
+```
 
-Below is an actual execution trace demonstrating how PALIMPSEST catches a near-miss hallucination `((x + y) - 1)`, isolates the 64-bit discrepancy using Z3, and self-repairs to the proven identity `(x + y)`:
+### 5. Configure environment variables
 
-```text
+**PowerShell / Command Prompt:**
+```cmd
+copy .env.example .env
+```
+
+**macOS / Linux:**
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` as needed. The default backend is `fake`, which is safe for local testing, UI demos, and CI flows.
+
+### 6. Run the app
+```bash
+npm run dev
+```
+
+This launches:
+- FastAPI backend: `http://127.0.0.1:8000`
+- Vite frontend: `http://127.0.0.1:5173`
+
+Open `http://127.0.0.1:5173` in your browser.
+
+## Environment Variables
+The project reads configuration from `.env` via `pydantic-settings`.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `PALIMPSEST_BACKEND` | `fake` | Backend type: `fake`, `ollama`, or `llamacpp` |
+| `OLLAMA_MODEL` | `palimpsest` | Model name for Ollama |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama endpoint URL |
+| `PROMPT_PROFILE` | `unsloth_qwen25` | Prompt profile (`unsloth_qwen25` for ollama/llamacpp, `plain` for fake) |
+| `WITNESS_POLICY` | `z3_default` | Counterexample witness policy (`z3_default` raw model or `bounded`) |
+| `RSHIFT_SEMANTICS` | `logical` | Right-shift semantics (`logical` zero-fill LShR or `arithmetic`) |
+| `SHIFT_SEMANTICS` | `z3` | Bitshift overflow semantics (`z3` zero on >= 64, or `x86_mask`) |
+| `Z3_TIMEOUT_MS` | `3000` | Solver timeout in milliseconds |
+| `NUM_PREDICT` | `512` | Max generated tokens per model response |
+| `OLLAMA_KEEP_ALIVE` | `5m` | Ollama model memory residency duration |
+| `MODEL_WARMUP` | `false` | Warm up model on server startup |
+| `TEMP_RETRY_INCREMENT` | `0.1` | Temperature bump on repeat candidate guess |
+| `MAX_ITERATIONS` | `5` | Maximum CEGIS retry iterations |
+| `HISTORY_MODE` | `last` | History replay mode (`last` failure only or `all`) |
+| `LLAMACPP_MODEL_PATH` | `models/palimpsest-q4_k_m.gguf` | Path to GGUF model file |
+| `LLAMACPP_N_THREADS` | `4` | llama.cpp worker threads |
+| `HOST` | `127.0.0.1` | API bind host |
+| `PORT` | `8000` | API bind port |
+Supported Model Backends
+Fake backend
+Use this for development, CI, and deterministic demos.
+
+env
+PALIMPSEST_BACKEND=fake
+Ollama backend
+env
+PALIMPSEST_BACKEND=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=palimpsest
+llama.cpp backend
+env
+PALIMPSEST_BACKEND=llamacpp
+LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf
+LLAMACPP_N_THREADS=4
+Model Integration Guide
+Option A: Ollama daemon
+Place your model in models/.
+Ensure Ollama is running:
+bash
+ollama serve
+Create the local model:
+bash
+ollama create palimpsest -f Modelfile
+Configure .env:
+bash
+PALIMPSEST_BACKEND=ollama
+OLLAMA_MODEL=palimpsest
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+Run the demo CLI:
+bash
+python backend/app/cli_demo.py "(x ^ y) + 2 * (x & y)" --backend ollama
+Option B: Direct GGUF via llama.cpp
+bash
+pip install llama-cpp-python
+Then set:
+
+bash
+PALIMPSEST_BACKEND=llamacpp
+LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf
+LLAMACPP_N_THREADS=8
+
+### Troubleshooting: Ollama
+
+If the UI reports **"MODEL OFFLINE: Ollama is not running at http://127.0.0.1:11434"** or synthesis fails to connect:
+
+#### 1. Windows System Tray App & Startup on Login
+- The official Windows installer runs Ollama as a background service in your Windows System Tray (notification area near the clock).
+- If the Ollama icon is missing from the tray, search for **Ollama** in your Start Menu and launch it.
+- To ensure Ollama is always active, right-click the Ollama tray icon and enable **Run at login** (or enable it under Task Manager > Startup apps).
+- Alternatively, launch the daemon directly from any terminal:
+  ```cmd
+  ollama serve
+  ```
+
+#### 2. Run the Palimpsest System Doctor (`npm run doctor`)
+To diagnose your full environment, virtualenv, ports, and Ollama status in one step:
+
+**PowerShell (Windows):**
+```powershell
+npm run doctor
+```
+
+**Command Prompt (Windows):**
+```cmd
+npm run doctor
+```
+
+The doctor validates:
+- Node.js runtime (>= 18.0.0)
+- Python virtual environment (`.venv`)
+- GGUF weights file presence (`models/palimpsest-q4_k_m.gguf`)
+- Ports 8000 and 5173 status (free or owned by Palimpsest)
+- Ollama daemon reachability at `OLLAMA_BASE_URL`
+- Model catalog registration for `palimpsest`
+- Active `.env` settings
+
+#### 3. Register the Model (`npm run model:setup`)
+If Ollama is running but `palimpsest` is missing from the model catalog, run the automated setup command (which checks that `models/palimpsest-q4_k_m.gguf` is present before creating the model):
+
+**PowerShell (Windows):**
+```powershell
+npm run model:setup
+```
+
+**Command Prompt (Windows):**
+```cmd
+npm run model:setup
+```
+
+Or manually:
+```cmd
+ollama create palimpsest -f Modelfile
+```
+
+#### 4. Optional Fallback to llama.cpp (`BACKEND_FALLBACK=llamacpp`)
+If you want automatic fallback to local CPU inference when Ollama is offline or stopping:
+1. Set in `.env`:
+   ```env
+   BACKEND_FALLBACK=llamacpp
+   ```
+2. When active, Palimpsest runs `models/palimpsest-q4_k_m.gguf` directly and displays a visible **LLAMA.CPP (fallback)** badge on the dashboard header and Proof Banner. It never falls back silently or to the fake backend.
+
+#### 5. Verify Daemon Health & Catalog
+Confirm the daemon is listening and inspect installed models:
+
+**PowerShell / Command Prompt:**
+```cmd
+curl.exe http://127.0.0.1:11434/api/tags
+curl.exe http://127.0.0.1:8000/api/health
+```
+
+The `/api/health` response provides actionable diagnosis:
+```json
+{
+  "status": "ok",
+  "backend": "ollama",
+  "model_name": "palimpsest",
+  "model_status": "ready",
+  "model_reachable": true,
+  "model_unreachable_reason": null,
+  "hint": null,
+  "fix_command": null,
+  "is_fallback": false
+}
+```
+If `model_status` is `"ollama_not_running"` or `"model_missing"`, the UI displays a recovery panel with copyable commands and a "Check again" button.
+Ollama CLI Proof Example
+This is the proof pattern the project is designed to produce: a near-miss candidate is rejected by Z3, the solver extracts the witness, and the model repairs itself until the expression is formally verified.
+
+Text
 > Node Executed: [parse_ast]
 > AST Parsed Successfully.
 Initial Semantic AST Nodes (BinOp/UnaryOp/Name/Constant): 9
@@ -191,278 +377,62 @@ Reasoning summary: Counterexample witness assignment (x=0, y=1) evaluated candid
 [+] AST Nodes: Final 3 (Reduced by 66.67%)
 [+] Equivalence proven by Z3 (QF_BV, 64-bit)
 ========================================
-```
+This demonstrates the exact retry loop the project is designed to run.
 
----
+Sample Data and Test Cases
+Benchmark examples are included under:
 
-## 📂 Repository Layout
+examples/sample_mba_cases.json
+examples/README.md
+The test suite is located here:
 
-```text
-palimpsest/
-├── .env.example                  # Template environment configuration
-├── ARCHITECTURE.md               # Runtime protocol, state machine & verification contract
-├── LICENSE                       # MIT License
-├── Modelfile                     # Ollama custom model definition
-├── README.md                     # Project documentation
-├── TASKS.md                      # Engineering roadmap and task breakdown
-├── package.json                  # Root workspace orchestration scripts
-├── pytest.ini                    # Pytest configuration
-├── backend/
-│   ├── app/                      # FastAPI application, LangGraph nodes & CLI demo
-│   ├── requirements.txt          # Python backend & Z3 dependencies
-│   └── tests/                    # API, core logic, and graph routing test suites
-├── examples/
-│   ├── README.md                 # Benchmark documentation
-│   └── sample_mba_cases.json     # Curated 64-bit MBA test cases & near-miss checks
-├── frontend/
-│   ├── package.json              # Vite + React dependencies
-│   └── src/                      # Live proof UI, graph visualizer & telemetry views
-├── models/                       # Local GGUF model storage directory
-├── scripts/                      # Helper & automation scripts
-├── training/
-│   ├── ast_slicer.py             # AST decomposition utilities
-│   ├── dataset_generator.py      # Synthetic MBA corpus generator
-│   ├── mba_mutator.py            # Algebraic identity mutation engine
-│   └── z3_verifier.py            # Standalone SMT equivalence verification script
-└── palimpsest.sqlite             # Local-only telemetry database (generated at runtime)
-```
+backend/tests/test_api.py
+backend/tests/test_core.py
+backend/tests/test_graph.py
+Run the backend suite:
 
----
-
-## 🚀 Quickstart
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+ & npm
-- Optional: Ollama or a local llama.cpp GGUF model
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/rthivisha/palimpsest.git
-cd palimpsest
-```
-
-### 2. Create and Activate a Virtual Environment
-
-```bash
-python -m venv .venv
-
-# macOS / Linux
-source .venv/bin/activate
-
-# Windows PowerShell
-# .\.venv\Scripts\Activate.ps1
-```
-
-### 3. Install Backend & Frontend Dependencies
-
-```bash
-# Install Python dependencies (FastAPI, LangGraph, Z3, etc.)
-pip install -r backend/requirements.txt
-
-# Install root and frontend Node dependencies
-npm install
-npm --prefix frontend install
-```
-
-### 4. Configure Environment Variables
-
-```bash
-cp .env.example .env
-```
-
-> [!TIP]
-> The default backend in `.env.example` is fake, which runs deterministic synthesis out of the box—ideal for instant UI demos, local testing, and CI pipelines without needing a GPU or external weights.
-
-### 5. Launch the Full Stack
-
-```bash
-npm run dev
-```
-
-This spins up both services concurrently:
-
-- **FastAPI Backend:** http://127.0.0.1:8000
-- **Vite + React Frontend:** http://localhost:5173
-
-Open http://localhost:5173 in your browser to start de-obfuscating.
-
----
-
-## ⚙️ Environment Variables
-
-Configuration is managed via `.env` using pydantic-settings:
-
-### Model & Inference Settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `PALIMPSEST_BACKEND` | `fake` | Active inference backend: fake, ollama, or llamacpp |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama server endpoint |
-| `OLLAMA_MODEL` | `palimpsest` | Target model tag in Ollama |
-| `LLAMACPP_MODEL_PATH` | `models/palimpsest-q4_k_m.gguf` | Local path to GGUF model weights |
-| `LLAMACPP_N_THREADS` | `CPU count` | CPU thread allocation for llama.cpp |
-| `MODEL_TIMEOUT_SECONDS` | `10` | Per-iteration model inference timeout |
-| `SYSTEM_PROMPT` | `empty` | Optional custom system prompt override |
-| `TOOL_ROLE` | `user` | Message role used for warning/repair feedback |
-| `HISTORY_MODE` | `last` | Context history replay mode across iterations |
-| `TEMP_RETRY_INCREMENT` | `0.1` | Sampling temperature bump on repeated candidate guesses |
-
-### Z3 Solver, Safety Gate & Server Settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `Z3_TIMEOUT_MS` | `3000` | Microsoft Z3 solver timeout in milliseconds |
-| `MAX_ITERATIONS` | `5` | Maximum CEGIS retry iterations per expression |
-| `SHIFT_SEMANTICS` | `z3` | Bitshift verification semantics |
-| `MAX_AST_DEPTH` | `100` | Maximum permitted AST depth before rejection |
-| `MAX_EXPR_CHARS` | `5000` | Maximum permitted input character length |
-| `DATABASE_PATH` | `palimpsest.sqlite` | Local SQLite telemetry database file path |
-| `LANGSMITH_TRACING` | `false` | Optional LangSmith trace logging toggle |
-| `HOST` | `127.0.0.1` | FastAPI bind host |
-| `PORT` | `8000` | FastAPI bind port |
-
----
-
-## 🧠 Model Integration Guide
-
-### Supported Backend Modes
-
-| Mode | `.env` Configuration | Best For |
-|---|---|---|
-| Fake | `PALIMPSEST_BACKEND=fake` | Development, CI pipelines, and deterministic UI demos |
-| Ollama | `PALIMPSEST_BACKEND=ollama`<br>`OLLAMA_BASE_URL=http://127.0.0.1:11434`<br>`OLLAMA_MODEL=palimpsest` | Local daemon-managed inference with custom Modelfile |
-| llama.cpp | `PALIMPSEST_BACKEND=llamacpp`<br>`LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf`<br>`LLAMACPP_N_THREADS=4` | Direct in-process GGUF execution without external daemons |
-
-### Option A: Ollama Daemon Setup
-
-Place your model weights in `models/`.
-
-Start the Ollama daemon:
-
-```bash
-ollama serve
-```
-
-Build the custom palimpsest model from the repository Modelfile:
-
-```bash
-ollama create palimpsest -f Modelfile
-```
-
-Update `.env`:
-
-```dotenv
-PALIMPSEST_BACKEND=ollama
-OLLAMA_MODEL=palimpsest
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-```
-
-Run the CLI proof demo:
-
-```bash
-python backend/app/cli_demo.py "(x ^ y) + 2 * (x & y)" --backend ollama
-```
-
-### Option B: Direct GGUF via llama.cpp
-
-Install the Python bindings:
-
-```bash
-pip install llama-cpp-python
-```
-
-Update `.env`:
-
-```dotenv
-PALIMPSEST_BACKEND=llamacpp
-LLAMACPP_MODEL_PATH=models/palimpsest-q4_k_m.gguf
-LLAMACPP_N_THREADS=8
-```
-
-### Troubleshooting: Model Offline or Synthesis Failure
-
-If the UI reports MODEL OFFLINE: Ollama is not running at http://127.0.0.1:11434 or synthesis fails:
-
-**Verify Ollama is started:**
-
-In a separate terminal, launch the daemon:
-
-```bash
-ollama serve
-```
-
-**Check the daemon health:**
-
-Confirm the daemon is listening on port 11434:
-
-```bash
-curl http://127.0.0.1:11434/api/tags
-```
-
-You should receive a JSON response listing installed models.
-
-**Verify the palimpsest model exists:**
-
-If the UI or CLI reports "Model 'palimpsest' not found; run ollama create palimpsest -f Modelfile", build the model package:
-
-```bash
-ollama create palimpsest -f Modelfile
-```
-
-Then verify it appears in your local catalog:
-
-```bash
-ollama list
-```
-
-**Confirm PALIMPSEST connectivity:**
-
-Check the PALIMPSEST system health endpoint:
-
-```bash
-curl http://127.0.0.1:8000/api/health
-```
-
-The response will confirm:
-
-```json
-{
-  "status": "healthy",
-  "backend": "ollama",
-  "model_name": "palimpsest",
-  "model_reachable": true,
-  "model_unreachable_reason": null
-}
-```
-
-If `model_reachable` is false, review `OLLAMA_BASE_URL` in `.env` (default: http://127.0.0.1:11434).
-
----
-
-## 🧪 Sample Data and Test Cases
-
-Curated MBA benchmark expressions are included under `examples/sample_mba_cases.json` and documented in `examples/README.md`.
-
-### Running the Verification & Test Suites
-
-```bash
-# Run the full backend test suite (API, Core AST/Z3, and LangGraph routing)
+bash
 pytest -v --durations=10
+Run a frontend build validation:
 
-# Validate the production frontend build
+bash
 npm run build:frontend
-```
+Technical Design Documents
+The architecture and design notes are documented in:
 
-- `backend/tests/test_api.py` — FastAPI endpoint and health contract tests.
-- `backend/tests/test_core.py` — AST safety gate and Z3 QF_BV verification unit tests.
-- `backend/tests/test_graph.py` — LangGraph state transitions and CEGIS retry loop tests.
+ARCHITECTURE.md
+TASKS.md
+These cover the runtime protocol, state machine, safety constraints, verification contract, and model integration strategy.
 
-### Sample Benchmark JSON
+Security and Safety
+PALIMPSEST is built around strict local execution and formal verification.
 
-```json
+Safety controls include:
+
+AST allowlisting
+strict length and depth limits
+no eval() or arbitrary code execution
+isolated Z3 verification contexts
+single-run locking for local inference resources
+local-only SQLite telemetry
+License
+This project is licensed under the MIT License.
+
+See the LICENSE file for details.
+
+Repository
+GitHub: https://github.com/rthivisha/palimpsest
+Summary
+PALIMPSEST is a local, proof-first de-obfuscation system for 64-bit MBA expressions. It is intended to be an auditable, air-gapped alternative to model-only rewriting where correctness is enforced by formal verification rather than guesswork.
+
+## Results & Evaluation Status
+
+> [!IMPORTANT]
+> **No held-out evaluation yet; training-row diagnostics only.**
+> Official benchmark figures will be generated strictly by code execution from the evaluation SQLite database once the held-out evaluation protocol is run.
+
+Example Benchmark Data
+JSON
 {
   "metadata": {
     "project": "PALIMPSEST",
@@ -512,33 +482,8 @@ npm run build:frontend
     }
   ]
 }
-```
-
----
-
-## 🛡️ Security, Safety & Design Docs
-
-> [!WARNING]
-> **Zero-Trust Execution Model:** Untrusted expressions from reverse-engineering targets must never be passed to `eval()`. PALIMPSEST parses all inputs into a restricted AST before any model or solver interaction occurs.
-
-- **Strict AST Allowlisting** — Rejects function calls, attribute access, imports, and non-arithmetic/bitwise constructs.
-- **Bounded Complexity** — Enforces `MAX_AST_DEPTH=100` and `MAX_EXPR_CHARS=5000` to prevent parser or solver DoS.
-- **No `eval()` or Dynamic Execution** — Expressions are translated strictly into isolated Z3 bit-vector ASTs.
-- **Single-Run Inference Locking** — Prevents local hardware contention during concurrent requests.
-- **Air-Gapped Telemetry** — All run histories stay inside local `palimpsest.sqlite`.
-
-For deep-dive engineering specifications on the runtime protocol, state machine, safety constraints, and verification contract, see:
-
-- `ARCHITECTURE.md`
-- `TASKS.md`
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License — see the LICENSE file for details.
-
-```text
+MIT License
+md
 MIT License
 
 Copyright (c) 2025 PALIMPSEST contributors
@@ -560,4 +505,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```

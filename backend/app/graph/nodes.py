@@ -87,6 +87,8 @@ def make_propose_node(
             tool_role=settings.TOOL_ROLE,
             system_prompt=settings.SYSTEM_PROMPT,
             history_mode=settings.HISTORY_MODE,
+            prompt_profile=state.get("prompt_profile"),
+            backend=backend,
         )
 
         # 2. Invoke model backend
@@ -150,6 +152,7 @@ def verify_node(state: PalimpsestState, config: Optional[Dict[str, Any]] = None)
         original_expr=orig_expr,
         candidate_expr=cand_expr,
         timeout_ms=settings.Z3_TIMEOUT_MS,
+        witness_policy=state.get("witness_policy", settings.WITNESS_POLICY),
     )
 
     # Build telemetry record

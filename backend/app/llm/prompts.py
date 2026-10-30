@@ -25,8 +25,27 @@ following the closing `</think>` tag.
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.app.config import settings
 
 PROMPT_PREFIX = "De-obfuscate this 64-bit MBA expression:\n"
+QWEN25_DEFAULT_SYSTEM_MESSAGE = "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
+
+
+def get_default_prompt_profile_for_backend(backend: Optional[Any] = None) -> str:
+    """Returns the default prompt profile: unsloth_qwen25 for ollama/llamacpp, plain for fake."""
+    b_name = ""
+    if isinstance(backend, str):
+        b_name = backend.lower().strip()
+    elif backend is not None:
+        b_name = getattr(backend, "backend_name", type(backend).__name__).lower().strip()
+    elif settings.PALIMPSEST_BACKEND:
+        b_name = settings.PALIMPSEST_BACKEND.lower().strip()
+
+    if "fake" in b_name or "mock" in b_name or "stub" in b_name:
+        return "plain"
+    if "ollama" in b_name or "llama" in b_name:
+        return "unsloth_qwen25"
+    return getattr(settings, "PROMPT_PROFILE", "unsloth_qwen25")
 
 
 def format_initial_prompt(expression: str) -> str:
@@ -58,6 +77,8 @@ def build_messages(
     tool_role: str = "user",
     system_prompt: str = "",
     history_mode: str = "last",
+    prompt_profile: Optional[str] = None,
+    backend: Optional[Any] = None,
 ) -> List[Dict[str, str]]:
     """Builds the complete message history for the model backend.
 
@@ -65,17 +86,27 @@ def build_messages(
         obfuscated_expr: The original expression being de-obfuscated.
         history: List of past attempt dicts (each with candidate, raw_output, status, witness, expected, actual).
         tool_role: Role for the verification feedback turn ('user' or 'tool').
-        system_prompt: Optional system message. If empty, no system turn is added.
+        system_prompt: Optional system message. If empty, uses profile default.
         history_mode: 'last' (default, matches training: only replay the latest failure)
                       or 'all' (appends all prior failure turns).
+        prompt_profile: 'plain' or 'unsloth_qwen25' (defaults to unsloth_qwen25 for ollama/llamacpp, plain for fake).
+        backend: Optional backend instance or backend name used to resolve profile default.
 
     Returns:
         List of message dictionaries matching ChatML expectations.
     """
+    if prompt_profile and prompt_profile.strip():
+        profile = prompt_profile.lower().strip()
+    else:
+        profile = get_default_prompt_profile_for_backend(backend)
+
     messages: List[Dict[str, str]] = []
 
-    # 1. Optional System Message
-    if system_prompt and system_prompt.strip():
+    # 1. System Message
+    if profile == "unsloth_qwen25":
+        sys_msg = system_prompt.strip() if system_prompt and system_prompt.strip() else QWEN25_DEFAULT_SYSTEM_MESSAGE
+        messages.append({"role": "system", "content": sys_msg})
+    elif system_prompt and system_prompt.strip():
         messages.append({"role": "system", "content": system_prompt.strip()})
 
     # 2. Turn 1: Initial User Prompt
@@ -120,10 +151,18 @@ def build_messages(
         error = att.get("error")
         feedback_text = format_z3_feedback(witness, expected, actual, status=status, error=error)
 
-        messages.append({
-            "role": tool_role,
-            "content": feedback_text
-        })
+        if profile == "unsloth_qwen25":
+            # Exact training format: user turn wrapped in <tool_response>...</tool_response>
+            fb_content = f"<tool_response>\n{feedback_text}\n</tool_response>"
+            messages.append({
+                "role": "user",
+                "content": fb_content
+            })
+        else:
+            messages.append({
+                "role": tool_role,
+                "content": feedback_text
+            })
 
     return messages
 

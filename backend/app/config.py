@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Model Backend Selection: "fake", "ollama", or "llamacpp"
     PALIMPSEST_BACKEND: str = "fake"
+    # Optional fallback backend when primary is unreachable: e.g. "llamacpp"
+    BACKEND_FALLBACK: Optional[str] = None
 
     # Ollama Backend Options
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
@@ -27,6 +29,8 @@ class Settings(BaseSettings):
     Z3_TIMEOUT_MS: int = 3000
     MAX_ITERATIONS: int = 5
     SHIFT_SEMANTICS: str = "z3"  # "z3" (default: shift >= 64 is 0) or "x86_mask" (shift & 63)
+    RSHIFT_SEMANTICS: str = "logical"  # "logical" (default: 0-fill LShR) or "arithmetic" (z3py >> sign-extend)
+    WITNESS_POLICY: str = "z3_default"  # "z3_default" (default: raw Z3 model) or "bounded" (try [2, 16] first)
     MODEL_TIMEOUT_SECONDS: int = 30
 
     # AST Complexity and Safety Limits
@@ -34,6 +38,7 @@ class Settings(BaseSettings):
     MAX_EXPR_CHARS: int = 5000
 
     # [CONFIRM] Items & Tunables
+    PROMPT_PROFILE: str = "unsloth_qwen25"  # "unsloth_qwen25" (default for ollama/llamacpp) or "plain" (default for fake)
     # Role used for the Z3 feedback turn: "user" (default) or "tool"
     TOOL_ROLE: str = "user"
     # System prompt (default empty; Qwen default system prompt is suppressed if empty)

@@ -10,6 +10,7 @@ Features:
 """
 import json
 import logging
+import time
 from typing import Callable, Dict, List, Optional
 
 import httpx
@@ -74,65 +75,74 @@ class OllamaBackend(BaseLLMBackend):
 
         generated_chunks: List[str] = []
 
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                with client.stream("POST", url, json=payload) as response:
-                    if response.status_code != 200:
-                        error_body = response.read().decode("utf-8", errors="ignore")
-                        # Distinguish model not found from other errors using /api/tags
-                        try:
-                            tags_resp = client.get(f"{self.base_url}/api/tags", timeout=2.0)
-                            if tags_resp.status_code == 200:
-                                models = [m.get("name", "") for m in tags_resp.json().get("models", [])]
-                                found = any(self.model_name == m or m.startswith(f"{self.model_name}:") for m in models)
-                                if not found or response.status_code == 404 or "not found" in error_body.lower():
-                                    raise LLMBackendError(
-                                        f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
-                                    )
-                        except LLMBackendError:
-                            raise
-                        except Exception:
-                            pass
+        for attempt in range(2):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    with client.stream("POST", url, json=payload) as response:
+                        if response.status_code != 200:
+                            error_body = response.read().decode("utf-8", errors="ignore")
+                            # Distinguish model not found from other errors using /api/tags
+                            try:
+                                tags_resp = client.get(f"{self.base_url}/api/tags", timeout=2.0)
+                                if tags_resp.status_code == 200:
+                                    models = [m.get("name", "") for m in tags_resp.json().get("models", [])]
+                                    found = any(self.model_name == m or m.startswith(f"{self.model_name}:") for m in models)
+                                    if not found or response.status_code == 404 or "not found" in error_body.lower():
+                                        raise LLMBackendError(
+                                            f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
+                                        )
+                            except LLMBackendError:
+                                raise
+                            except Exception:
+                                pass
 
-                        if response.status_code == 404 or "not found" in error_body.lower():
+                            if response.status_code == 404 or "not found" in error_body.lower():
+                                raise LLMBackendError(
+                                    f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
+                                )
                             raise LLMBackendError(
-                                f"Model '{self.model_name}' not found; run ollama create {self.model_name} -f Modelfile"
+                                f"Ollama returned HTTP {response.status_code}: {error_body.strip()}"
                             )
-                        raise LLMBackendError(
-                            f"Ollama returned HTTP {response.status_code}: {error_body.strip()}"
-                        )
 
-                    for line in response.iter_lines():
-                        if should_cancel and should_cancel():
-                            raise LLMBackendError("Inference cancelled by client disconnect")
+                        for line in response.iter_lines():
+                            if should_cancel and should_cancel():
+                                raise LLMBackendError("Inference cancelled by client disconnect")
 
-                        if not line:
-                            continue
+                            if not line:
+                                continue
 
-                        try:
-                            chunk_data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
+                            try:
+                                chunk_data = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
 
-                        content = chunk_data.get("message", {}).get("content", "")
-                        if content:
-                            generated_chunks.append(content)
+                            content = chunk_data.get("message", {}).get("content", "")
+                            if content:
+                                generated_chunks.append(content)
 
-                        if chunk_data.get("done", False):
-                            break
+                            if chunk_data.get("done", False):
+                                break
 
-        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            raise LLMBackendError(
-                f"Ollama is not running at {self.base_url}"
-            ) from exc
-        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
-            raise LLMBackendError(
-                f"Ollama inference timed out after {self.timeout}s. Error: {exc}"
-            ) from exc
-        except LLMBackendError:
-            raise
-        except Exception as exc:
-            raise LLMBackendError(f"Unexpected error communicating with Ollama: {exc}") from exc
+                return "".join(generated_chunks).strip()
+
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                if attempt == 0 and not generated_chunks:
+                    logger.warning(
+                        "Ollama connection refused before receiving tokens. Retrying once after 1s..."
+                    )
+                    time.sleep(1.0)
+                    continue
+                raise LLMBackendError(
+                    f"Ollama is not running at {self.base_url}"
+                ) from exc
+            except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                raise LLMBackendError(
+                    f"Ollama inference timed out after {self.timeout}s. Error: {exc}"
+                ) from exc
+            except LLMBackendError:
+                raise
+            except Exception as exc:
+                raise LLMBackendError(f"Unexpected error communicating with Ollama: {exc}") from exc
 
         return "".join(generated_chunks).strip()
 

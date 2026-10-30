@@ -175,9 +175,9 @@ class TestLangGraphLoop:
         assert len(history) == 2
         assert history[0]["candidate"] == "x ^ y"
         assert history[0]["status"] == "SAT"
-        # Assert demo witness is small (bounded by ULT(v, 16))
+        # Assert demo witness is a valid 64-bit witness dictionary (values are uint64)
         assert history[0]["witness"] is not None
-        assert all(0 <= val < 16 for val in history[0]["witness"].values())
+        assert all(isinstance(val, int) and 0 <= val <= 0xFFFFFFFFFFFFFFFF for val in history[0]["witness"].values())
         assert history[1]["candidate"] == "x + y"
         assert history[1]["status"] == "QF_BV_UNSAT_64BIT_VERIFIED"
 

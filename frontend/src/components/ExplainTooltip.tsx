@@ -20,7 +20,7 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   mba: {
     title: 'Mixed Boolean-Arithmetic (MBA)',
     content:
-      'MBA combines bitwise logic (&, |, ^, ~) with normal arithmetic (+, -, *). Obfuscators use MBA identities to hide simple operations inside convoluted, mathematically equivalent formulas that confuse disassemblers and decompilers.',
+      'MBA combines bitwise logic (&, |, ^, ~) with normal arithmetic (+, -, *). Obfuscators use MBA identities to hide simple operations inside convoluted, equivalent formulas that confuse disassemblers and decompilers.',
   },
   cegis: {
     title: 'CEGIS (Counterexample-Guided Synthesis)',
@@ -30,7 +30,7 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   z3: {
     title: 'Z3 SMT Solver (QF_BV)',
     content:
-      'Microsoft Z3 is a formal verification solver, NOT an AI model. In QF_BV (Quantifier-Free Bit-Vectors), Z3 algebraically checks whether there is ANY input where original != candidate. It produces formal mathematical proofs, never probabilistic guesses.',
+      'Microsoft Z3 is a formal verification solver, NOT an AI model. In QF_BV (Quantifier-Free Bit-Vectors), Z3 algebraically checks whether there is ANY input where original != candidate. It produces formal proofs, never probabilistic guesses.',
   },
   smt: {
     title: 'SMT Solving (Satisfiability Modulo Theories)',
@@ -45,7 +45,7 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
   sat_unsat: {
     title: 'UNSAT (Equivalent) vs SAT (Counterexample)',
     content:
-      '• UNSAT: The miter condition (original != candidate) has NO solutions. Equivalence is mathematically PROVEN.\n• SAT: A counterexample was found. The solver gives concrete variable values where the candidate produces the wrong output.',
+      '• UNSAT: The miter condition (original != candidate) has NO solutions. Equivalence proven by Z3 (QF_BV, 64-bit).\n• SAT: A counterexample was found. The solver gives concrete variable values where the candidate produces the wrong output.',
   },
   counterexample: {
     title: 'Counterexample Witness',
@@ -58,9 +58,9 @@ const EXPLANATIONS: Record<string, { title: string; content: string }> = {
       'Dead code expressions that look complex but always evaluate to a constant (e.g., (x & ~x) * y always equals 0). Obfuscators inject them to bloat the code with dead terms.',
   },
   compression: {
-    title: 'AST Node Compression',
+    title: 'AST Node Compression (Semantic)',
     content:
-      'Measures how much the syntax tree was simplified. We count syntactic operations (binary operators, unary operators, variables, constants) before and after de-obfuscation.',
+      'Measures how much the syntax tree was simplified. We count semantic nodes (BinOp, UnaryOp, Name, Constant) before and after de-obfuscation.',
   },
 };
 

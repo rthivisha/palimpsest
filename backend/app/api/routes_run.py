@@ -74,7 +74,35 @@ def run_synthesis_worker(
         return cancel_event.is_set()
 
     try:
-        llm = backend or get_backend(backend_name)
+        is_fallback = False
+        if backend is not None:
+            llm = backend
+        elif backend_name == "ollama" and (settings.BACKEND_FALLBACK or "").lower().strip() in (
+            "llamacpp",
+            "llama_cpp",
+            "llama-cpp",
+        ):
+            import httpx
+            from backend.app.llm.factory import is_llamacpp_available
+            ollama_ok = False
+            try:
+                with httpx.Client(timeout=1.0) as client:
+                    probe = client.get(f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+                    if probe.status_code == 200:
+                        ollama_ok = True
+            except Exception:
+                ollama_ok = False
+
+            if not ollama_ok and is_llamacpp_available():
+                logger.warning("Ollama unreachable and BACKEND_FALLBACK=llamacpp is set. Falling back to llama.cpp.")
+                llm = get_backend("llamacpp")
+                backend_name = "llamacpp"
+                model_name = os.path.basename(settings.LLAMACPP_MODEL_PATH)
+                is_fallback = True
+            else:
+                llm = get_backend(backend_name)
+        else:
+            llm = get_backend(backend_name)
 
         # 1. Emit run_started with backend and model_name
         dispatch("run_started", {
@@ -149,6 +177,8 @@ def run_synthesis_worker(
                 tool_role=settings.TOOL_ROLE,
                 system_prompt=settings.SYSTEM_PROMPT,
                 history_mode=settings.HISTORY_MODE,
+                prompt_profile=settings.PROMPT_PROFILE,
+                backend=llm,
             )
 
             raw_output = llm.generate(

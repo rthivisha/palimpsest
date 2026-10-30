@@ -17,29 +17,25 @@ export function App() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [isBackendOnline, setIsBackendOnline] = useState<boolean>(true);
 
-  useEffect(() => {
-    let isMounted = true;
-    const pollHealth = async () => {
-      try {
-        const res = await fetch('/api/health');
-        if (res.ok) {
-          const data: SystemHealth = await res.json();
-          if (isMounted) {
-            setHealth(data);
-            setIsBackendOnline(true);
-          }
-        } else {
-          if (isMounted) setIsBackendOnline(false);
-        }
-      } catch {
-        if (isMounted) setIsBackendOnline(false);
+  const pollHealth = async () => {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        const data: SystemHealth = await res.json();
+        setHealth(data);
+        setIsBackendOnline(true);
+      } else {
+        setIsBackendOnline(false);
       }
-    };
+    } catch {
+      setIsBackendOnline(false);
+    }
+  };
 
+  useEffect(() => {
     pollHealth();
     const interval = setInterval(pollHealth, 5000);
     return () => {
-      isMounted = false;
       clearInterval(interval);
     };
   }, []);
@@ -174,8 +170,14 @@ export function App() {
                   onCancelRun={cancelRun}
                   explainMode={explainMode}
                   fakeHint={fakeHint}
-                  isModelReachable={health?.model_reachable !== false}
+                  isModelReachable={
+                    health?.model_status
+                      ? health.model_status === 'ready'
+                      : health?.model_reachable !== false
+                  }
                   modelUnreachableReason={health?.model_unreachable_reason}
+                  health={health}
+                  onCheckAgain={pollHealth}
                 />
 
                 <AttemptTimeline

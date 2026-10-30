@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.app.config import settings
-from backend.app.core.ast_utils import count_nodes
+from backend.app.core.ast_utils import count_nodes, count_nodes_training
 from backend.app.core.outcomes import RunOutcome, EvalOutcome, determine_verified_outcome
 from backend.app.core.safety import is_safe_ast
 from backend.app.core.verifier import (
@@ -534,6 +534,20 @@ class EvalHarness:
         z3_p50, z3_p95 = compute_percentiles(z3_latencies)
         model_p50, model_p95 = compute_percentiles(model_latencies)
 
+        # Node Reduction Metrics: Figure 1 (Semantic) and Figure 2 (Training)
+        verified_results = [r for r in all_results if r["status"] == RunOutcome.VERIFIED.value and r.get("proven_expr")]
+        if verified_results:
+            sem_orig_avg = sum(count_nodes(r["expression"]) for r in verified_results) / len(verified_results)
+            sem_cand_avg = sum(count_nodes(r["proven_expr"]) for r in verified_results) / len(verified_results)
+            sem_reduction_pct = round((1.0 - (sem_cand_avg / sem_orig_avg)) * 100, 2) if sem_orig_avg > 0 else 0.0
+
+            trn_orig_avg = sum(count_nodes_training(r["expression"]) for r in verified_results) / len(verified_results)
+            trn_cand_avg = sum(count_nodes_training(r["proven_expr"]) for r in verified_results) / len(verified_results)
+            trn_reduction_pct = round((1.0 - (trn_cand_avg / trn_orig_avg)) * 100, 2) if trn_orig_avg > 0 else 0.0
+        else:
+            sem_orig_avg, sem_cand_avg, sem_reduction_pct = 0.0, 0.0, 0.0
+            trn_orig_avg, trn_cand_avg, trn_reduction_pct = 0.0, 0.0, 0.0
+
         return {
             "total_evaluated": total,
             "success_within_1_attempt_pct": k1_pct,
@@ -549,4 +563,16 @@ class EvalHarness:
             "z3_latency_p95": z3_p95,
             "model_latency_p50": model_p50,
             "model_latency_p95": model_p95,
+            "node_metrics": {
+                "figure_1_semantic": {
+                    "orig_avg": round(sem_orig_avg, 2),
+                    "cand_avg": round(sem_cand_avg, 2),
+                    "reduction_pct": sem_reduction_pct,
+                },
+                "figure_2_training": {
+                    "orig_avg": round(trn_orig_avg, 2),
+                    "cand_avg": round(trn_cand_avg, 2),
+                    "reduction_pct": trn_reduction_pct,
+                },
+            },
         }
